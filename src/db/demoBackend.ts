@@ -5,6 +5,10 @@
  */
 import type { BatchSummary, MediaFile, MoveOp } from "../library/types";
 import type { ClipSection } from "../library/sections";
+import type { Project, ThumbnailRow } from "./api";
+import strongUrl from "../thumbnails/fixtures/strong.png?url";
+import clutteredUrl from "../thumbnails/fixtures/cluttered.png?url";
+import lowContrastUrl from "../thumbnails/fixtures/low-contrast.png?url";
 import { basename, dirname, joinPath, pathKey } from "../library/paths";
 
 const ROOT = "C:\\Demo\\Leg Day Shoot";
@@ -51,6 +55,31 @@ const log: LoggedOp[] = [];
 
 let nextSectionId = 1;
 const sections: ClipSection[] = [];
+
+const projects: Project[] = [
+  { id: 1, title: "Leg day, fixed", slug: "leg-day-fixed", status: "active", createdAt: "2026-10-26T10:00:00", folderPath: null, winnerThumbnailId: null, thumbnailCount: 3, bestScore: null, lastTestedAt: null },
+];
+const fixtureUrls: Record<string, string> = { "strong.png": strongUrl, "cluttered.png": clutteredUrl, "low-contrast.png": lowContrastUrl };
+let nextThumbId = 1;
+const thumbnails: ThumbnailRow[] = Object.keys(fixtureUrls).map((name) => ({
+  id: nextThumbId++,
+  projectId: 1,
+  path: joinPath("C:\\Demo\\Thumbnails", name),
+  label: name.replace(".png", ""),
+  platform: "youtube",
+  fileHash: `fp:${name}`,
+  scoreTotal: null,
+  breakdownJson: null,
+  createdAt: "2026-10-26T10:00:00",
+}));
+const settings: Record<string, string> = {};
+let demoKey = false;
+
+const projectView = (p: Project): Project => {
+  const mine = thumbnails.filter((t) => t.projectId === p.id);
+  const scores = mine.map((t) => t.scoreTotal).filter((x): x is number => x != null);
+  return { ...p, thumbnailCount: mine.length, bestScore: scores.length ? Math.max(...scores) : null, lastTestedAt: mine.length ? mine[mine.length - 1].createdAt : null };
+};
 
 const visible = () => files.filter((f) => !pathKey(f.path).includes("/_archive/"));
 
@@ -156,6 +185,67 @@ const handlers: Record<string, (args: any) => unknown> = {
       return { sectionId: id, path: s.exportedPath, mode: s.startS % 2 === 0 ? "copy" : "encode", error: null };
     });
   },
+  list_projects: () => projects.map(projectView),
+  create_project: ({ title }: { title: string }) => {
+    if (!title.trim()) throw new Error("Give the project a title.");
+    const p: Project = { id: projects.length + 1, title: title.trim(), slug: title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), status: "active", createdAt: new Date().toISOString(), folderPath: null, winnerThumbnailId: null, thumbnailCount: 0, bestScore: null, lastTestedAt: null };
+    projects.unshift(p);
+    return projectView(p);
+  },
+  list_thumbnails: ({ projectId }: { projectId: number }) => thumbnails.filter((t) => t.projectId === projectId),
+  add_thumbnails: () => {
+    throw new Error("Adding images needs the desktop app. The demo project already has three candidates.");
+  },
+  read_thumbnail: async ({ thumbnailId }: { thumbnailId: number }) => {
+    const t = thumbnails.find((x) => x.id === thumbnailId)!;
+    const name = Object.keys(fixtureUrls).find((n) => t.path.endsWith(n))!;
+    return (await fetch(fixtureUrls[name])).arrayBuffer();
+  },
+  save_thumbnail_score: ({ thumbnailId, platform, scoreTotal, breakdownJson }: { thumbnailId: number; platform: "youtube" | "instagram"; scoreTotal: number; breakdownJson: string }) => {
+    Object.assign(thumbnails.find((t) => t.id === thumbnailId)!, { platform, scoreTotal, breakdownJson });
+  },
+  rename_thumbnail: ({ thumbnailId, label }: { thumbnailId: number; label: string }) => {
+    thumbnails.find((t) => t.id === thumbnailId)!.label = label;
+  },
+  remove_thumbnail: ({ thumbnailId }: { thumbnailId: number }) => {
+    thumbnails.splice(thumbnails.findIndex((t) => t.id === thumbnailId), 1);
+    for (const p of projects) if (p.winnerThumbnailId === thumbnailId) p.winnerThumbnailId = null;
+  },
+  set_winner: ({ projectId, thumbnailId }: { projectId: number; thumbnailId: number | null }) => {
+    projects.find((p) => p.id === projectId)!.winnerThumbnailId = thumbnailId;
+  },
+  get_setting: ({ key }: { key: string }) => settings[key] ?? null,
+  set_setting: ({ key, value }: { key: string; value: string }) => {
+    settings[key] = value;
+  },
+  ai_status: () => ({ configured: demoKey, source: demoKey ? "keychain" : null, model: "claude-opus-5-5" }),
+  set_api_key: ({ key }: { key: string }) => {
+    if (!key.startsWith("sk-ant-")) throw new Error("That doesn't look like an Anthropic API key (they start with sk-ant-).");
+    demoKey = true;
+    return handlers.ai_status({});
+  },
+  clear_api_key: () => {
+    demoKey = false;
+    return handlers.ai_status({});
+  },
+  // Canned critique so the flow can be clicked through; the real one calls Claude from Rust.
+  critique_thumbnail: ({ thumbnailId }: { thumbnailId: number }) => {
+    if (!demoKey) throw new Error("No API key set. Add one under Scoring settings to enable the AI critique.");
+    const t = thumbnails.find((x) => x.id === thumbnailId)!;
+    const strong = t.path.endsWith("strong.png");
+    return {
+      model: "claude-opus-5-5 (demo)",
+      hookScore: strong ? 7 : t.path.endsWith("cluttered.png") ? 4 : 3,
+      readsInOneSecond: strong,
+      emotion: strong ? "confident relief" : "confusion",
+      story: strong ? "Someone found the fix for a bad leg day." : "Hard to tell what the video is about.",
+      subjectNote: strong ? "The face is the clear focal point." : "No single subject stands out.",
+      critique: strong
+        ? ["Show the problem being fixed: a before/after split would add curiosity.", "The smile undersells the payoff; a surprised face would raise stakes."]
+        : ["Cut to one subject and one short phrase.", "Remove the background pattern so the face can carry the frame."],
+      cached: false,
+    };
+  },
   dashboard_summary: () => ({
     filesIndexed: visible().length,
     batchesApplied: new Set(log.filter((o) => !o.undoneAt).map((o) => o.batchId)).size,
@@ -168,6 +258,7 @@ const handlers: Record<string, (args: any) => unknown> = {
 export async function demoInvoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
   const handler = handlers[cmd];
   if (!handler) throw new Error(`Demo backend has no command "${cmd}"`);
+  const out = await handler(args);
   // Return copies so React state never aliases the demo store.
-  return structuredClone(handler(args)) as T;
+  return (out instanceof ArrayBuffer ? out : structuredClone(out)) as T;
 }

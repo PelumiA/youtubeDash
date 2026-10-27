@@ -1,7 +1,9 @@
+mod ai;
 mod db;
 mod fsops;
 mod scan;
 mod sections;
+mod thumbs;
 mod tools;
 
 use rusqlite::Connection;
@@ -255,6 +257,111 @@ async fn export_sections(state: State<'_, AppState>, root: String, media_file_id
 }
 
 #[tauri::command]
+fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<thumbs::Project>> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::list_projects(&conn).map_err(err)
+}
+
+#[tauri::command]
+fn create_project(state: State<'_, AppState>, title: String) -> CmdResult<thumbs::Project> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::create_project(&conn, &title)
+}
+
+#[tauri::command]
+fn list_thumbnails(state: State<'_, AppState>, project_id: i64) -> CmdResult<Vec<thumbs::Thumbnail>> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::list_thumbnails(&conn, project_id).map_err(err)
+}
+
+#[tauri::command]
+fn add_thumbnails(state: State<'_, AppState>, project_id: i64, paths: Vec<String>, platform: String) -> CmdResult<Vec<thumbs::Thumbnail>> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::add_thumbnails(&conn, project_id, &paths, &platform)
+}
+
+/// Raw bytes of a registered candidate, for decoding in the webview (no canvas taint, no
+/// broad file access: only images added to a test can be read).
+#[tauri::command]
+fn read_thumbnail(state: State<'_, AppState>, thumbnail_id: i64) -> CmdResult<tauri::ipc::Response> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::read_candidate(&conn, thumbnail_id).map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
+fn save_thumbnail_score(state: State<'_, AppState>, thumbnail_id: i64, platform: String, score_total: f64, breakdown_json: String) -> CmdResult<()> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::save_score(&conn, thumbnail_id, &platform, score_total, &breakdown_json).map_err(err)
+}
+
+#[tauri::command]
+fn rename_thumbnail(state: State<'_, AppState>, thumbnail_id: i64, label: String) -> CmdResult<()> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::set_label(&conn, thumbnail_id, &label).map_err(err)
+}
+
+#[tauri::command]
+fn remove_thumbnail(state: State<'_, AppState>, thumbnail_id: i64) -> CmdResult<()> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::remove_thumbnail(&conn, thumbnail_id).map_err(err)
+}
+
+#[tauri::command]
+fn set_winner(state: State<'_, AppState>, project_id: i64, thumbnail_id: Option<i64>) -> CmdResult<()> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::set_winner(&conn, project_id, thumbnail_id)
+}
+
+#[tauri::command]
+fn get_setting(state: State<'_, AppState>, key: String) -> CmdResult<Option<String>> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::get_setting(&conn, &key).map_err(err)
+}
+
+#[tauri::command]
+fn set_setting(state: State<'_, AppState>, key: String, value: String) -> CmdResult<()> {
+    let conn = state.db.lock().map_err(err)?;
+    thumbs::set_setting(&conn, &key, &value).map_err(err)
+}
+
+#[tauri::command]
+fn ai_status() -> ai::AiStatus {
+    ai::status()
+}
+
+#[tauri::command]
+fn set_api_key(key: String) -> CmdResult<ai::AiStatus> {
+    ai::set_key(&key)?;
+    Ok(ai::status())
+}
+
+#[tauri::command]
+fn clear_api_key() -> CmdResult<ai::AiStatus> {
+    ai::clear_key()?;
+    Ok(ai::status())
+}
+
+/// AI hook critique for one candidate. `image_base64` is a JPEG the frontend renders at the
+/// platform's upload size. Cached per image fingerprint + platform + title.
+#[tauri::command]
+async fn critique_thumbnail(state: State<'_, AppState>, thumbnail_id: i64, image_base64: String, platform: String, title: String) -> CmdResult<ai::Critique> {
+    let hash = {
+        let conn = state.db.lock().map_err(err)?;
+        let t = thumbs::get_thumbnail(&conn, thumbnail_id).map_err(err)?.ok_or("Thumbnail not found.")?;
+        let hash = t.file_hash.unwrap_or_default();
+        if let Some(c) = ai::cached(&conn, &hash, &platform, &title) {
+            return Ok(c);
+        }
+        hash
+    };
+    let (p, t) = (platform.clone(), title.clone());
+    let critique = tauri::async_runtime::spawn_blocking(move || ai::request_critique(&image_base64, &p, &t)).await.map_err(err)??;
+    let conn = state.db.lock().map_err(err)?;
+    ai::store(&conn, &hash, &platform, &title, &critique).map_err(err)?;
+    Ok(critique)
+}
+
+#[tauri::command]
 fn dashboard_summary(state: State<'_, AppState>) -> CmdResult<db::DashboardSummary> {
     let conn = state.db.lock().map_err(err)?;
     db::dashboard_summary(&conn).map_err(err)
@@ -291,6 +398,21 @@ pub fn run() {
             clip_keyframes,
             export_sections,
             tool_status,
+            list_projects,
+            create_project,
+            list_thumbnails,
+            add_thumbnails,
+            read_thumbnail,
+            save_thumbnail_score,
+            rename_thumbnail,
+            remove_thumbnail,
+            set_winner,
+            get_setting,
+            set_setting,
+            ai_status,
+            set_api_key,
+            clear_api_key,
+            critique_thumbnail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

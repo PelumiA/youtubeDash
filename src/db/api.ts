@@ -5,6 +5,7 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import type { BatchSummary, MediaFile, MoveOp, ScanResult } from "../library/types";
 import type { ClipSection, CutAnalysis, ExportResult } from "../library/sections";
+import type { AiCritique } from "../thumbnails/score";
 import { demoInvoke } from "./demoBackend";
 
 export interface DashboardSummary {
@@ -13,6 +14,37 @@ export interface DashboardSummary {
   ideasInInbox: number;
   projectsActive: number;
   recentBatches: BatchSummary[];
+}
+
+export interface Project {
+  id: number;
+  title: string;
+  slug: string;
+  status: string;
+  createdAt: string;
+  folderPath: string | null;
+  winnerThumbnailId: number | null;
+  thumbnailCount: number;
+  bestScore: number | null;
+  lastTestedAt: string | null;
+}
+
+export interface ThumbnailRow {
+  id: number;
+  projectId: number;
+  path: string;
+  label: string;
+  platform: "youtube" | "instagram";
+  fileHash: string | null;
+  scoreTotal: number | null;
+  breakdownJson: string | null;
+  createdAt: string;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  source: "env" | "keychain" | null;
+  model: string;
 }
 
 export const inDesktopApp = isTauri();
@@ -44,7 +76,35 @@ export const api = {
   clipKeyframes: (path: string) => call<number[]>("clip_keyframes", { path }),
   exportSections: (root: string, mediaFileId: number, sectionIds: number[]) =>
     call<ExportResult[]>("export_sections", { root, mediaFileId, sectionIds }),
+  listProjects: () => call<Project[]>("list_projects"),
+  createProject: (title: string) => call<Project>("create_project", { title }),
+  listThumbnails: (projectId: number) => call<ThumbnailRow[]>("list_thumbnails", { projectId }),
+  addThumbnails: (projectId: number, paths: string[], platform: string) => call<ThumbnailRow[]>("add_thumbnails", { projectId, paths, platform }),
+  readThumbnail: (thumbnailId: number) => call<ArrayBuffer>("read_thumbnail", { thumbnailId }),
+  saveThumbnailScore: (thumbnailId: number, platform: string, scoreTotal: number, breakdownJson: string) =>
+    call<void>("save_thumbnail_score", { thumbnailId, platform, scoreTotal, breakdownJson }),
+  renameThumbnail: (thumbnailId: number, label: string) => call<void>("rename_thumbnail", { thumbnailId, label }),
+  removeThumbnail: (thumbnailId: number) => call<void>("remove_thumbnail", { thumbnailId }),
+  setWinner: (projectId: number, thumbnailId: number | null) => call<void>("set_winner", { projectId, thumbnailId }),
+  getSetting: (key: string) => call<string | null>("get_setting", { key }),
+  setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
+  aiStatus: () => call<AiStatus>("ai_status"),
+  setApiKey: (key: string) => call<AiStatus>("set_api_key", { key }),
+  clearApiKey: () => call<AiStatus>("clear_api_key"),
+  critiqueThumbnail: (thumbnailId: number, imageBase64: string, platform: string, title: string) =>
+    call<AiCritique>("critique_thumbnail", { thumbnailId, imageBase64, platform, title }),
 };
+
+export async function pickImages(): Promise<string[]> {
+  if (!inDesktopApp) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    multiple: true,
+    title: "Choose thumbnail candidates",
+    filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "gif", "bmp"] }],
+  });
+  return Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+}
 
 /** Playable URL for a local file (desktop only; the folder must have been scanned). */
 export function mediaUrl(path: string): string | null {

@@ -92,8 +92,27 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Ordered schema changes on top of SCHEMA; `PRAGMA user_version` records how many ran.
+const MIGRATIONS: &[&str] = &[
+    // 1 — Phase 2: thumbnail tester.
+    "ALTER TABLE projects ADD COLUMN winner_thumbnail_id INTEGER;
+     ALTER TABLE thumbnails ADD COLUMN platform TEXT NOT NULL DEFAULT 'youtube';
+     ALTER TABLE thumbnails ADD COLUMN file_hash TEXT;
+     ALTER TABLE thumbnails ADD COLUMN label TEXT;
+     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS ai_cache (cache_key TEXT PRIMARY KEY, response TEXT NOT NULL, created_at TEXT NOT NULL);",
+];
+
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(SCHEMA)
+    conn.execute_batch(SCHEMA)?;
+    let version: usize = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? as usize;
+    for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
+        if let Err(e) = conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1)) {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+    }
+    Ok(())
 }
 
 pub fn now() -> String {

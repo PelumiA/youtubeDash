@@ -10,7 +10,7 @@ export type Route = "home" | "library" | "thumbnails" | "ideas";
 const NAV: Array<{ id: Route; label: string; hint?: string }> = [
   { id: "home", label: "Home" },
   { id: "library", label: "Media library" },
-  { id: "thumbnails", label: "Thumbnail tester", hint: "Phase 2" },
+  { id: "thumbnails", label: "Thumbnail tester" },
   { id: "ideas", label: "Idea organizer", hint: "Phase 3" },
 ];
 
