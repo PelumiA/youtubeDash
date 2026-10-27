@@ -23,6 +23,7 @@ chrono = "0.4"
 imagesize = "0.13"
 kamadak-exif = "0.5"
 ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
 
 # API key storage in the OS credential store.
 [target.'cfg(windows)'.dependencies]

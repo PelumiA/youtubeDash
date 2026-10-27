@@ -1,6 +1,7 @@
 mod ai;
 mod db;
 mod fsops;
+mod ideas;
 mod scan;
 mod sections;
 mod thumbs;
@@ -15,6 +16,8 @@ use tauri::{AppHandle, Manager, State};
 
 struct AppState {
     db: Mutex<Connection>,
+    /// App-owned copies of captured idea screenshots.
+    idea_images: PathBuf,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -361,6 +364,72 @@ async fn critique_thumbnail(state: State<'_, AppState>, thumbnail_id: i64, image
     Ok(critique)
 }
 
+/// New inbox idea. `image_base64` is the raw image file (screenshot, upload or drop); the
+/// frontend has already run OCR on it locally.
+#[tauri::command]
+fn capture_idea(state: State<'_, AppState>, raw_text: String, ocr_text: Option<String>, image_base64: Option<String>, source: String) -> CmdResult<ideas::Idea> {
+    use base64::Engine;
+    let image = image_base64.map(|b| base64::engine::general_purpose::STANDARD.decode(b).map_err(|_| "The image data was corrupted.".to_string())).transpose()?;
+    let conn = state.db.lock().map_err(err)?;
+    ideas::capture(&conn, &state.idea_images, &raw_text, ocr_text.as_deref(), image.as_deref(), &source)
+}
+
+#[tauri::command]
+fn list_ideas(state: State<'_, AppState>, query: String, status: Option<String>) -> CmdResult<Vec<ideas::Idea>> {
+    let conn = state.db.lock().map_err(err)?;
+    ideas::list(&conn, &query, status.as_deref())
+}
+
+#[tauri::command]
+fn update_idea(state: State<'_, AppState>, idea_id: i64, patch: ideas::IdeaPatch) -> CmdResult<ideas::Idea> {
+    let conn = state.db.lock().map_err(err)?;
+    ideas::update(&conn, idea_id, &patch)
+}
+
+#[tauri::command]
+fn set_idea_status(state: State<'_, AppState>, idea_id: i64, status: String) -> CmdResult<ideas::Idea> {
+    let conn = state.db.lock().map_err(err)?;
+    ideas::set_status(&conn, idea_id, &status)
+}
+
+#[tauri::command]
+fn read_idea_image(state: State<'_, AppState>, idea_id: i64) -> CmdResult<tauri::ipc::Response> {
+    let conn = state.db.lock().map_err(err)?;
+    ideas::read_image(&conn, idea_id).map(tauri::ipc::Response::new)
+}
+
+/// Claude suggestion (category, title, tags) from the idea's text only. Stored on the idea as
+/// a suggestion; nothing is applied until the user confirms.
+#[tauri::command]
+async fn categorize_idea(state: State<'_, AppState>, idea_id: i64, taxonomy: Vec<String>) -> CmdResult<ideas::Idea> {
+    let text = {
+        let conn = state.db.lock().map_err(err)?;
+        let text = ideas::get(&conn, idea_id)?.full_text();
+        if let Some(s) = ai::cached_suggestion(&conn, &text, &taxonomy) {
+            return ideas::update(&conn, idea_id, &ideas::IdeaPatch { suggestion: Some(s), ..Default::default() });
+        }
+        text
+    };
+    let (t, tax) = (text.clone(), taxonomy.clone());
+    let suggestion = tauri::async_runtime::spawn_blocking(move || ai::request_categorization(&t, &tax)).await.map_err(err)??;
+    let conn = state.db.lock().map_err(err)?;
+    ai::store_suggestion(&conn, &text, &taxonomy, &suggestion).map_err(err)?;
+    ideas::update(&conn, idea_id, &ideas::IdeaPatch { suggestion: Some(suggestion), ..Default::default() })
+}
+
+/// Dry run of the project folder for the confirmation dialog.
+#[tauri::command]
+fn preview_scaffold(state: State<'_, AppState>, request: ideas::ScaffoldRequest) -> CmdResult<ideas::ScaffoldPlan> {
+    let conn = state.db.lock().map_err(err)?;
+    ideas::plan(&conn, &request)
+}
+
+#[tauri::command]
+fn scaffold_idea(state: State<'_, AppState>, request: ideas::ScaffoldRequest) -> CmdResult<thumbs::Project> {
+    let mut conn = state.db.lock().map_err(err)?;
+    ideas::scaffold(&mut conn, &request)
+}
+
 #[tauri::command]
 fn dashboard_summary(state: State<'_, AppState>) -> CmdResult<db::DashboardSummary> {
     let conn = state.db.lock().map_err(err)?;
@@ -375,7 +444,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let conn = db::open(&dir.join("creator-dashboard.db"))?;
-            app.manage(AppState { db: Mutex::new(conn) });
+            app.manage(AppState { db: Mutex::new(conn), idea_images: dir.join("idea-images") });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -413,6 +482,14 @@ pub fn run() {
             set_api_key,
             clear_api_key,
             critique_thumbnail,
+            capture_idea,
+            list_ideas,
+            update_idea,
+            set_idea_status,
+            read_idea_image,
+            categorize_idea,
+            preview_scaffold,
+            scaffold_idea,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

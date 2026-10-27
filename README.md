@@ -14,7 +14,7 @@ explicit confirmation, every change is logged and undoable, and nothing is ever 
 |---|---|---|
 | 1 | Media library organizer | **Built**: scan, naming presets, dry-run diff, apply + undo, tags, duplicates, long-clip sections + chapters. Not yet tried on a real media folder. Transcript (Whisper) segmentation not started |
 | 2 | Thumbnail tester | **Built**: offline heuristic scoring with local OCR, YouTube + Instagram cover overlays, previews, comparison, winner, adjustable weights/overrides, opt-in Claude critique. Not yet tried with your own thumbnails or a live API key |
-| 3 | Idea organizer | Not started |
+| 3 | Idea organizer | **Built**: text / screenshot / paste / drop capture, local OCR, offline + opt-in Claude categorization, confirm-then-scaffold project folders, inbox + search. Not yet tried with a live API key |
 | 4 | Polish (settings, search, onboarding) | Not started |
 
 ## Requirements
@@ -36,9 +36,11 @@ npm run dev            # browser-only UI preview against in-memory demo data
 
 ```bash
 npm test                              # rename engine, sections/chapters, contrast/safe-zone math, scoring,
-                                      # and the thumbnail fixture pack scored with real local OCR
+                                      # the thumbnail fixture pack scored with real local OCR, and the
+                                      # idea happy path: screenshot → OCR → suggestion → project folder
 cd src-tauri && cargo test            # scan, apply/undo byte-identical restore, rollback, archive, tags,
-                                      # and a generated 30-min clip: silence detection, section export, source unchanged
+                                      # a generated 30-min clip: silence detection, section export, source unchanged,
+                                      # and idea capture/search/scaffolding (never reuses an existing folder)
 ```
 
 ## Layout
@@ -50,7 +52,8 @@ src/
   library/    Module 1 UI + pure rename engine (renameEngine.ts)
   thumbnails/ Module 2: heuristics.ts (pure scoring), ocr.ts (local Tesseract), score.ts (weights,
               overrides, why-won), platforms.ts (overlay zones), fixtures/ (test thumbnails)
-  ideas/      Module 3 (placeholder)
+  ideas/      Module 3: taxonomy.ts (presets, offline suggestion), ocrImage.ts (screenshot OCR prep),
+              fixtures/ (test screenshot)
   db/         typed bridge to Rust commands + browser demo backend
 src-tauri/src/
   scan.rs     read-only folder scan, metadata, fingerprints
@@ -58,7 +61,9 @@ src-tauri/src/
   sections.rs long-clip sections: silence/scene detection, keyframes, export to _sections/
   tools.rs    locates ffmpeg/ffprobe
   thumbs.rs   projects, thumbnail candidates (referenced in place), settings
-  ai.rs       Claude vision critique: raw HTTP, key from env or OS keychain, cached per image
+  ideas.rs    idea inbox, search, project folder scaffolding (create-only)
+  ai.rs       Claude calls (thumbnail critique, idea categorization): raw HTTP, key from env or
+              OS keychain, cached
   db.rs       SQLite schema and queries
   lib.rs      Tauri commands
 ```
@@ -123,3 +128,38 @@ under Scoring settings:
 
 OCR assets (`public/tesseract`, ~15 MB) are copied from `node_modules` by `npm run dev`/`build`.
 To regenerate the test fixtures, run `node scripts/make-thumbnail-fixtures.mjs`.
+
+## Idea organizer
+
+Capture an idea by typing it, pasting a screenshot (Ctrl+V anywhere on the page), choosing an
+image, or dropping one on the window. Screenshots are copied into the app's data folder, so
+the idea survives the original being cleaned up, and their text is read locally (dark-mode
+screenshots are inverted and small ones upscaled first). You can correct the OCR text inline.
+
+Each idea gets a suggestion of category, working title and tags:
+
+- **Offline, always.** A keyword match picks the category and says which words matched; the
+  first real sentence becomes the title (app chrome like handles, timestamps and like counts is
+  skipped); hashtags and frequent topic words become tags.
+- **Claude, when you ask.** With an API key, "Ask Claude" sends the idea's text (typed and OCR'd,
+  not the image) and your category list. After you confirm once, new ideas that session get
+  Claude's suggestion automatically. The category is constrained to your list. Cached per text
+  + categories.
+
+A suggestion is never applied silently over your edits. Creating the project is a separate,
+confirmed step that shows the category, the folder and a preview of `brief.md`:
+
+```
+<Projects folder>/<YYYY-MM-DD>_<slug>/
+  brief.md        title, category, tags, dates, idea text, screenshot text, brief footer
+  script.md       stub: hook, setup, main points, payoff, call to action
+  assets/         idea-screenshot.<ext> when the idea came from an image
+  thumbnails/     the thumbnail tester's file picker opens here for this project
+```
+
+Scaffolding never writes into an existing folder (a name clash gets `-2`) and never
+overwrites a file. The project also appears in the thumbnail tester and on Home. Categories
+come from a preset (Default, or Groovy Gains with its brief CTA footer) and are editable under
+Idea settings. Ideas are archived, never deleted.
+
+To regenerate the test screenshot, run `node scripts/make-idea-fixtures.mjs`.

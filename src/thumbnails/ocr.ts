@@ -107,10 +107,25 @@ export function mergeLines(a: TextBox[], b: TextBox[]): TextBox[] {
  */
 export async function detectText(worker: Worker, image: Parameters<Worker["recognize"]>[0], scale: number): Promise<TextBox[]> {
   const passes: TextBox[][] = [];
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
   for (const method of ["0", "2"]) {
     await worker.setParameters({ thresholding_method: method } as never);
     const { data } = await worker.recognize(image, {}, { blocks: true });
     passes.push(linesFromWords(wordsFromBlocks(data.blocks), scale));
   }
   return mergeLines(passes[0], passes[1]);
+}
+
+/**
+ * OCR a screenshot of mostly text (a post, a note) into plain text in reading order. The
+ * shared worker is tuned for thumbnails, so page segmentation is switched for this call.
+ */
+export async function recognizePlainText(worker: Worker, image: Parameters<Worker["recognize"]>[0]): Promise<string> {
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO, thresholding_method: "0" } as never);
+  try {
+    const { data } = await worker.recognize(image);
+    return data.text;
+  } finally {
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+  }
 }

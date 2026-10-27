@@ -5,10 +5,12 @@
  */
 import type { BatchSummary, MediaFile, MoveOp } from "../library/types";
 import type { ClipSection } from "../library/sections";
-import type { Project, ThumbnailRow } from "./api";
+import type { Idea, IdeaPatch, Project, ScaffoldRequest, ThumbnailRow } from "./api";
+import { suggestLocally } from "../ideas/taxonomy";
 import strongUrl from "../thumbnails/fixtures/strong.png?url";
 import clutteredUrl from "../thumbnails/fixtures/cluttered.png?url";
 import lowContrastUrl from "../thumbnails/fixtures/low-contrast.png?url";
+import ideaShotUrl from "../ideas/fixtures/idea-screenshot.png?url";
 import { basename, dirname, joinPath, pathKey } from "../library/paths";
 
 const ROOT = "C:\\Demo\\Leg Day Shoot";
@@ -57,7 +59,7 @@ let nextSectionId = 1;
 const sections: ClipSection[] = [];
 
 const projects: Project[] = [
-  { id: 1, title: "Leg day, fixed", slug: "leg-day-fixed", status: "active", createdAt: "2026-10-26T10:00:00", folderPath: null, winnerThumbnailId: null, thumbnailCount: 3, bestScore: null, lastTestedAt: null },
+  { id: 1, title: "Leg day, fixed", slug: "leg-day-fixed", category: null, status: "active", createdAt: "2026-10-26T10:00:00", folderPath: null, winnerThumbnailId: null, thumbnailCount: 3, bestScore: null, lastTestedAt: null },
 ];
 const fixtureUrls: Record<string, string> = { "strong.png": strongUrl, "cluttered.png": clutteredUrl, "low-contrast.png": lowContrastUrl };
 let nextThumbId = 1;
@@ -74,6 +76,45 @@ const thumbnails: ThumbnailRow[] = Object.keys(fixtureUrls).map((name) => ({
 }));
 const settings: Record<string, string> = {};
 let demoKey = false;
+
+let nextIdeaId = 1;
+const idea = (patch: Partial<Idea>): Idea => ({
+  id: nextIdeaId++, title: null, rawText: null, ocrText: null, category: null, tags: [], hasImage: false, source: "text",
+  status: "inbox", projectId: null, projectFolder: null, suggestion: null, createdAt: "2026-10-26T09:00:00", updatedAt: null, ...patch,
+});
+const ideas: Idea[] = [
+  idea({ rawText: "Remake the \"stop doing lunges like this\" reel that went viral last week, but with the fix at the end.", createdAt: "2026-10-25T18:20:00" }),
+  idea({
+    source: "clipboard", hasImage: true, createdAt: "2026-10-26T08:05:00",
+    ocrText: "3 squat mistakes that are killing\nyour leg day (and how to fix each\none).\n\nFilm it as a quick talking head\nwith the squat rack behind me.\n\n2.4K likes 318 replies",
+  }),
+];
+/** Idea images: the seeded screenshot is a fixture URL, captured ones are kept in memory. */
+const ideaImages = new Map<number, string | ArrayBuffer>([[2, ideaShotUrl]]);
+const usedFolders = new Set<string>();
+
+const slugify = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled";
+
+function demoPlan(req: ScaffoldRequest) {
+  const i = ideas.find((x) => x.id === req.ideaId);
+  if (!i) throw new Error("Idea not found.");
+  if (!req.title.trim()) throw new Error("Give the project a title.");
+  if (!req.category.trim()) throw new Error("Confirm a category first.");
+  if (!req.projectsDir) throw new Error("Choose a Projects folder first.");
+  const base = joinPath(req.projectsDir, `${req.date}_${slugify(req.title).slice(0, 60).replace(/-+$/, "")}`);
+  let folder = base;
+  for (let n = 2; usedFolders.has(pathKey(folder)); n++) folder = `${base}-${n}`;
+  const shot = i.hasImage ? "idea-screenshot.png" : null;
+  let brief = `# ${req.title.trim()}\n\n- **Category:** ${req.category}\n- **Tags:** ${req.tags.length ? req.tags.join(", ") : "none"}\n- **Captured:** ${i.createdAt.slice(0, 10)}\n- **Project created:** ${req.date}\n`;
+  if (i.rawText?.trim()) brief += `\n## Idea\n\n${i.rawText.trim()}\n`;
+  if (i.ocrText?.trim()) brief += `\n## Text from the screenshot\n\n${i.ocrText.trim()}\n`;
+  if (shot) brief += `\n![Screenshot](assets/${shot})\n`;
+  if (req.footer.trim()) brief += `\n---\n\n${req.footer.trim()}\n`;
+  const script = `# ${req.title.trim()} — script\n\n## Hook (first 5 seconds)\n\n\n## Setup\n\n\n## Main points\n\n1. \n2. \n3. \n\n## Payoff\n\n\n## Call to action\n\n`;
+  return { folder, entries: ["brief.md", "script.md", "assets/", ...(shot ? [`assets/${shot}`] : []), "thumbnails/"], brief, script };
+}
+
+const ideaView = (i: Idea): Idea => ({ ...i, projectFolder: projects.find((p) => p.id === i.projectId)?.folderPath ?? null });
 
 const projectView = (p: Project): Project => {
   const mine = thumbnails.filter((t) => t.projectId === p.id);
@@ -188,7 +229,7 @@ const handlers: Record<string, (args: any) => unknown> = {
   list_projects: () => projects.map(projectView),
   create_project: ({ title }: { title: string }) => {
     if (!title.trim()) throw new Error("Give the project a title.");
-    const p: Project = { id: projects.length + 1, title: title.trim(), slug: title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), status: "active", createdAt: new Date().toISOString(), folderPath: null, winnerThumbnailId: null, thumbnailCount: 0, bestScore: null, lastTestedAt: null };
+    const p: Project = { id: Math.max(0, ...projects.map((x) => x.id)) + 1, title: title.trim(), slug: slugify(title), category: null, status: "active", createdAt: new Date().toISOString(), folderPath: null, winnerThumbnailId: null, thumbnailCount: 0, bestScore: null, lastTestedAt: null };
     projects.unshift(p);
     return projectView(p);
   },
@@ -246,11 +287,65 @@ const handlers: Record<string, (args: any) => unknown> = {
       cached: false,
     };
   },
+  capture_idea: ({ rawText, ocrText, imageBase64, source }: { rawText: string; ocrText: string | null; imageBase64: string | null; source: Idea["source"] }) => {
+    if (!rawText.trim() && !imageBase64) throw new Error("Type an idea or add a screenshot first.");
+    const now = new Date().toISOString();
+    const created = idea({ rawText: rawText.trim() || null, ocrText: ocrText?.trim() || null, hasImage: !!imageBase64, source, createdAt: now, updatedAt: now });
+    if (imageBase64) ideaImages.set(created.id, Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0)).buffer);
+    ideas.push(created);
+    return ideaView(created);
+  },
+  list_ideas: ({ query, status }: { query: string; status: Idea["status"] | null }) => {
+    const q = query.trim().toLowerCase();
+    return ideas
+      .map(ideaView)
+      .filter((i) => (!status || i.status === status) && [i.title, i.rawText, i.ocrText, i.category, i.tags.join(" "), i.projectFolder].join(" ").toLowerCase().includes(q))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id);
+  },
+  update_idea: ({ ideaId, patch }: { ideaId: number; patch: IdeaPatch }) => {
+    const i = ideas.find((x) => x.id === ideaId);
+    if (!i) throw new Error("Idea not found.");
+    const defined: Partial<Idea> = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined && v !== null));
+    if (defined.tags) defined.tags = [...new Set(defined.tags.map((t) => t.trim().replace(/^#/, "").toLowerCase()).filter(Boolean))];
+    Object.assign(i, defined, { updatedAt: new Date().toISOString() });
+    return ideaView(i);
+  },
+  set_idea_status: ({ ideaId, status }: { ideaId: number; status: "inbox" | "archived" }) => {
+    const i = ideas.find((x) => x.id === ideaId)!;
+    if (i.status === "project") throw new Error("This idea is already a project.");
+    i.status = status;
+    return ideaView(i);
+  },
+  read_idea_image: async ({ ideaId }: { ideaId: number }) => {
+    const img = ideaImages.get(ideaId);
+    if (!img) throw new Error("This idea has no image.");
+    return typeof img === "string" ? (await fetch(img)).arrayBuffer() : img;
+  },
+  // Canned "Claude" suggestion (the keyword suggestion relabelled) so the flow can be clicked through.
+  categorize_idea: ({ ideaId, taxonomy }: { ideaId: number; taxonomy: string[] }) => {
+    if (!demoKey) throw new Error("No API key set. Add an Anthropic API key in settings to use Claude.");
+    const i = ideas.find((x) => x.id === ideaId)!;
+    const local = suggestLocally([i.rawText, i.ocrText].filter(Boolean).join("\n\n"), taxonomy);
+    i.suggestion = { ...local, source: "ai", model: "claude-opus-5-5 (demo)", reason: null };
+    return ideaView(i);
+  },
+  preview_scaffold: ({ request }: { request: ScaffoldRequest }) => demoPlan(request),
+  scaffold_idea: ({ request }: { request: ScaffoldRequest }) => {
+    const i = ideas.find((x) => x.id === request.ideaId);
+    if (i?.status === "project") throw new Error("This idea is already a project.");
+    if (i?.status === "archived") throw new Error("Restore this idea to the inbox first.");
+    const plan = demoPlan(request);
+    usedFolders.add(pathKey(plan.folder));
+    const p: Project = { id: Math.max(0, ...projects.map((x) => x.id)) + 1, title: request.title.trim(), slug: slugify(request.title), category: request.category, status: "active", createdAt: new Date().toISOString(), folderPath: plan.folder, winnerThumbnailId: null, thumbnailCount: 0, bestScore: null, lastTestedAt: null };
+    projects.unshift(p);
+    Object.assign(i!, { status: "project", projectId: p.id, title: p.title, category: request.category, tags: request.tags });
+    return projectView(p);
+  },
   dashboard_summary: () => ({
     filesIndexed: visible().length,
     batchesApplied: new Set(log.filter((o) => !o.undoneAt).map((o) => o.batchId)).size,
-    ideasInInbox: 0,
-    projectsActive: 0,
+    ideasInInbox: ideas.filter((i) => i.status === "inbox").length,
+    projectsActive: projects.filter((p) => p.status === "active").length,
     recentBatches: handlers.list_batches({}) as BatchSummary[],
   }),
 };

@@ -18,6 +18,7 @@ pub struct Project {
     pub id: i64,
     pub title: String,
     pub slug: String,
+    pub category: Option<String>,
     pub status: String,
     pub created_at: String,
     pub folder_path: Option<String>,
@@ -54,7 +55,7 @@ pub fn slugify(title: &str) -> String {
     if s.is_empty() { "untitled".into() } else { s }
 }
 
-const PROJECT_SELECT: &str = "SELECT p.id, p.title, p.slug, p.status, p.created_at, p.folder_path, p.winner_thumbnail_id,
+const PROJECT_SELECT: &str = "SELECT p.id, p.title, p.slug, p.category, p.status, p.created_at, p.folder_path, p.winner_thumbnail_id,
         (SELECT COUNT(*) FROM thumbnails t WHERE t.project_id = p.id),
         (SELECT MAX(score_total) FROM thumbnails t WHERE t.project_id = p.id),
         (SELECT MAX(created_at) FROM thumbnails t WHERE t.project_id = p.id)
@@ -65,13 +66,14 @@ fn project_row(r: &rusqlite::Row) -> rusqlite::Result<Project> {
         id: r.get(0)?,
         title: r.get(1)?,
         slug: r.get(2)?,
-        status: r.get(3)?,
-        created_at: r.get(4)?,
-        folder_path: r.get(5)?,
-        winner_thumbnail_id: r.get(6)?,
-        thumbnail_count: r.get(7)?,
-        best_score: r.get(8)?,
-        last_tested_at: r.get(9)?,
+        category: r.get(3)?,
+        status: r.get(4)?,
+        created_at: r.get(5)?,
+        folder_path: r.get(6)?,
+        winner_thumbnail_id: r.get(7)?,
+        thumbnail_count: r.get(8)?,
+        best_score: r.get(9)?,
+        last_tested_at: r.get(10)?,
     })
 }
 
@@ -220,7 +222,7 @@ mod tests {
         let c = conn();
         db::migrate(&c).unwrap();
         let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, 1);
+        assert_eq!(v, 2);
     }
 
     #[test]

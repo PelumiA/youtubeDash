@@ -1,4 +1,5 @@
 /** Browser-side glue: decode image bytes, run OCR in a local worker, and score. */
+import { bytesToBase64 } from "../app/base64";
 import type { Raster } from "./heuristics";
 import { detectText, ocrWorker } from "./ocr";
 import { analyzeImage } from "./pipeline";
@@ -6,7 +7,7 @@ import { PLATFORMS, type PlatformId } from "./platforms";
 import { coverResize } from "./raster";
 import type { Breakdown } from "./score";
 
-const ocrPaths = () => {
+export const ocrPaths = () => {
   const base = new URL("/tesseract", window.location.href).href;
   return { workerPath: `${base}/worker.min.js`, corePath: base, langPath: base };
 };
@@ -43,8 +44,5 @@ export async function critiqueJpegBase64(raster: Raster, platform: PlatformId): 
   const spec = PLATFORMS[platform];
   const canvas = toCanvas(coverResize(raster, spec.width, spec.height));
   const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode image"))), "image/jpeg", 0.88));
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
+  return bytesToBase64(await blob.arrayBuffer());
 }

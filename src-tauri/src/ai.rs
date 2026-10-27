@@ -1,8 +1,9 @@
-//! Claude vision critique for thumbnails (the advisory "hook" dimension).
+//! Claude calls: the thumbnail hook critique (vision) and idea categorization (text only).
 //!
 //! Raw HTTP to the Messages API (there is no official Rust SDK). The API key comes from
 //! `ANTHROPIC_API_KEY` or the OS credential store and never reaches the webview. Results are
-//! cached per image fingerprint + platform + title, so re-opening a test costs nothing.
+//! cached (per image fingerprint + platform + title, or per idea text + taxonomy), so asking
+//! again costs nothing.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -140,18 +141,7 @@ struct Raw {
 
 /// Parses a Messages API response body into a critique, handling refusals.
 pub fn parse_response(body: &Value) -> Result<Critique, String> {
-    if body["stop_reason"] == "refusal" {
-        let category = body["stop_details"]["category"].as_str().unwrap_or("unspecified");
-        return Err(format!("Claude declined to critique this image (category: {category})."));
-    }
-    if body["stop_reason"] == "max_tokens" {
-        return Err("The critique was cut off before it finished. Try again.".into());
-    }
-    let text = body["content"]
-        .as_array()
-        .and_then(|blocks| blocks.iter().find(|b| b["type"] == "text"))
-        .and_then(|b| b["text"].as_str())
-        .ok_or("The response had no text block.")?;
+    let text = output_text(body, "critique this image")?;
     let raw: Raw = serde_json::from_str(text).map_err(|e| format!("Unexpected response format: {e}"))?;
     Ok(Critique {
         model: body["model"].as_str().unwrap_or(MODEL).to_string(),
@@ -191,12 +181,9 @@ pub fn store(conn: &Connection, file_hash: &str, platform: &str, title: &str, c:
     Ok(())
 }
 
-/// Calls the API. Blocking; run off the main thread.
-pub fn request_critique(image_base64: &str, platform: &str, title: &str) -> Result<Critique, String> {
-    let (key, _) = api_key().ok_or("No API key set. Add one under Scoring settings to enable the AI critique.")?;
-    if image_base64.len() > MAX_BASE64_LEN {
-        return Err("Image is too large to send (5 MB limit).".into());
-    }
+/// POSTs a Messages request. Blocking; run off the main thread.
+fn post(body: Value) -> Result<Value, String> {
+    let (key, _) = api_key().ok_or("No API key set. Add an Anthropic API key in settings to use Claude.")?;
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(180)).build();
     let resp = agent
         .post(API_URL)
@@ -204,21 +191,166 @@ pub fn request_critique(image_base64: &str, platform: &str, title: &str) -> Resu
         .set("anthropic-version", API_VERSION)
         .set("anthropic-beta", FALLBACK_BETA)
         .set("content-type", "application/json")
-        .send_json(build_request(image_base64, platform, title));
-    let body: Value = match resp {
-        Ok(r) => r.into_json().map_err(|e| e.to_string())?,
+        .send_json(body);
+    match resp {
+        Ok(r) => r.into_json().map_err(|e| e.to_string()),
         Err(ureq::Error::Status(code, r)) => {
             let detail = r.into_json::<Value>().ok().and_then(|v| v["error"]["message"].as_str().map(String::from)).unwrap_or_default();
-            return Err(match code {
-                401 | 403 => "The API key was rejected. Check it under Scoring settings.".into(),
+            Err(match code {
+                401 | 403 => "The API key was rejected. Check it in settings.".into(),
                 429 => "Rate limited by the API. Wait a moment and try again.".into(),
                 529 | 500..=599 => format!("The API is temporarily unavailable ({code}). Try again shortly."),
                 _ => format!("API error {code}: {detail}"),
-            });
+            })
         }
-        Err(ureq::Error::Transport(t)) => return Err(format!("Could not reach the API (offline?): {t}")),
-    };
-    parse_response(&body)
+        Err(ureq::Error::Transport(t)) => Err(format!("Could not reach the API (offline?): {t}")),
+    }
+}
+
+/// The JSON text of a structured-output response, after refusal and truncation checks.
+fn output_text<'a>(body: &'a Value, what: &str) -> Result<&'a str, String> {
+    if body["stop_reason"] == "refusal" {
+        let category = body["stop_details"]["category"].as_str().unwrap_or("unspecified");
+        return Err(format!("Claude declined to {what} (category: {category})."));
+    }
+    if body["stop_reason"] == "max_tokens" {
+        return Err("The response was cut off before it finished. Try again.".into());
+    }
+    body["content"]
+        .as_array()
+        .and_then(|blocks| blocks.iter().find(|b| b["type"] == "text"))
+        .and_then(|b| b["text"].as_str())
+        .ok_or_else(|| "The response had no text block.".to_string())
+}
+
+pub fn request_critique(image_base64: &str, platform: &str, title: &str) -> Result<Critique, String> {
+    if image_base64.len() > MAX_BASE64_LEN {
+        return Err("Image is too large to send (5 MB limit).".into());
+    }
+    parse_response(&post(build_request(image_base64, platform, title))?)
+}
+
+// ---- Idea categorization (text only; screenshots are OCR'd locally first) ----
+
+/// Bump when the categorization prompt or schema changes.
+const CATEGORIZE_VERSION: u32 = 1;
+/// Ideas are short; past this it's a pasted article and the start is enough to sort it.
+const MAX_IDEA_CHARS: usize = 6000;
+
+const CATEGORIZE_PROMPT: &str = "You sort content ideas for a solo video creator. The idea may be a typed note or text \
+read by OCR from a screenshot (a post, a comment, a note), so ignore UI noise such as usernames, timestamps, like counts \
+and buttons, and read past OCR typos.
+
+Pick the one category from the creator's list that best fits the video this idea would become. Suggest a working title \
+in plain words (under 70 characters, no emoji, no hashtags) that says what the video delivers. Give 3 to 5 short \
+lowercase topic tags (one or two words each) that would help find this idea later.";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Suggestion {
+    pub category: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    /// "ai" or "local"
+    pub source: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub cached: bool,
+    /// Why the offline (keyword) suggestion picked its category.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+pub fn build_categorize_request(text: &str, taxonomy: &[String]) -> Value {
+    let text: String = text.trim().chars().take(MAX_IDEA_CHARS).collect();
+    json!({
+        "model": MODEL,
+        "max_tokens": 4000,
+        "system": CATEGORIZE_PROMPT,
+        "output_config": {
+            "effort": "low",
+            "format": { "type": "json_schema", "schema": {
+                "type": "object",
+                "properties": {
+                    "category": { "type": "string", "enum": taxonomy },
+                    "title": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["category", "title", "tags"],
+                "additionalProperties": false
+            }}
+        },
+        "fallbacks": "default",
+        "messages": [{ "role": "user", "content": format!("Categories: {}\n\n<idea>\n{text}\n</idea>", taxonomy.join(", ")) }]
+    })
+}
+
+pub fn parse_categorize_response(body: &Value, taxonomy: &[String]) -> Result<Suggestion, String> {
+    #[derive(Deserialize)]
+    struct RawSuggestion {
+        category: String,
+        title: String,
+        tags: Vec<String>,
+    }
+    let raw: RawSuggestion = serde_json::from_str(output_text(body, "categorize this idea")?).map_err(|e| format!("Unexpected response format: {e}"))?;
+    let category = taxonomy
+        .iter()
+        .find(|c| c.eq_ignore_ascii_case(raw.category.trim()))
+        .cloned()
+        .ok_or_else(|| format!("Claude suggested \"{}\", which is not one of your categories.", raw.category))?;
+    let mut tags: Vec<String> = Vec::new();
+    for t in raw.tags.iter().map(|t| t.trim().trim_start_matches('#').to_lowercase()).filter(|t| !t.is_empty()) {
+        if !tags.contains(&t) {
+            tags.push(t);
+        }
+    }
+    tags.truncate(5);
+    Ok(Suggestion {
+        category,
+        title: raw.title.trim().chars().take(100).collect(),
+        tags,
+        source: "ai".into(),
+        model: Some(body["model"].as_str().unwrap_or(MODEL).to_string()),
+        cached: false,
+        reason: None,
+    })
+}
+
+fn categorize_cache_key(text: &str, taxonomy: &[String]) -> String {
+    let mut h = blake3::Hasher::new();
+    for part in [text.trim(), &taxonomy.join("\n"), MODEL, "categorize", &CATEGORIZE_VERSION.to_string()] {
+        h.update(part.as_bytes());
+        h.update(&[0]);
+    }
+    h.finalize().to_hex().to_string()
+}
+
+pub fn cached_suggestion(conn: &Connection, text: &str, taxonomy: &[String]) -> Option<Suggestion> {
+    let json: Option<String> = conn
+        .query_row("SELECT response FROM ai_cache WHERE cache_key = ?1", params![categorize_cache_key(text, taxonomy)], |r| r.get(0))
+        .optional()
+        .ok()
+        .flatten();
+    json.and_then(|j| serde_json::from_str::<Suggestion>(&j).ok()).map(|s| Suggestion { cached: true, ..s })
+}
+
+pub fn store_suggestion(conn: &Connection, text: &str, taxonomy: &[String], s: &Suggestion) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO ai_cache (cache_key, response, created_at) VALUES (?1, ?2, ?3)",
+        params![categorize_cache_key(text, taxonomy), serde_json::to_string(s).expect("serialize"), db::now()],
+    )?;
+    Ok(())
+}
+
+pub fn request_categorization(text: &str, taxonomy: &[String]) -> Result<Suggestion, String> {
+    if text.trim().is_empty() {
+        return Err("The idea has no text to categorize yet.".into());
+    }
+    if taxonomy.is_empty() {
+        return Err("Add at least one category first.".into());
+    }
+    parse_categorize_response(&post(build_categorize_request(text, taxonomy))?, taxonomy)
 }
 
 #[cfg(test)]
@@ -260,5 +392,43 @@ mod tests {
         assert!(cached(&c, "fp:1", "youtube", "Title").unwrap().cached);
         assert!(cached(&c, "fp:1", "youtube", "Other title").is_none());
         assert!(cached(&c, "fp:1", "instagram", "Title").is_none());
+    }
+
+    #[test]
+    fn categorize_request_constrains_category_and_sends_text_only() {
+        let tax = vec!["tutorial".to_string(), "talking-head".to_string()];
+        let r = build_categorize_request("  3 squat mistakes  ", &tax);
+        assert_eq!(r["output_config"]["format"]["schema"]["properties"]["category"]["enum"], json!(tax));
+        let content = r["messages"][0]["content"].as_str().unwrap();
+        assert!(content.contains("<idea>\n3 squat mistakes\n</idea>") && content.contains("tutorial, talking-head"));
+        let long = "x".repeat(MAX_IDEA_CHARS + 500);
+        assert!(build_categorize_request(&long, &tax)["messages"][0]["content"].as_str().unwrap().len() < MAX_IDEA_CHARS + 200);
+    }
+
+    #[test]
+    fn categorize_parse_normalizes_and_rejects_unknown_categories() {
+        let tax = vec!["tutorial".to_string(), "talking-head".to_string()];
+        let body = |cat: &str| {
+            let text = json!({ "category": cat, "title": " Fix your squat ", "tags": ["#Squat", "squat", "legs", "form", "gym", "mobility", "x"] }).to_string();
+            json!({ "model": "claude-opus-5-5", "stop_reason": "end_turn", "content": [{ "type": "text", "text": text }] })
+        };
+        let s = parse_categorize_response(&body("Talking-Head"), &tax).unwrap();
+        assert_eq!(s.category, "talking-head");
+        assert_eq!(s.title, "Fix your squat");
+        assert_eq!(s.tags, vec!["squat", "legs", "form", "gym", "mobility"]);
+        assert!(parse_categorize_response(&body("vlog"), &tax).is_err());
+        let refusal = json!({ "stop_reason": "refusal", "content": [] });
+        assert!(parse_categorize_response(&refusal, &tax).unwrap_err().contains("declined"));
+    }
+
+    #[test]
+    fn suggestion_cache_is_keyed_by_text_and_taxonomy() {
+        let c = Connection::open_in_memory().unwrap();
+        db::migrate(&c).unwrap();
+        let tax = vec!["a".to_string(), "b".to_string()];
+        let s = Suggestion { category: "a".into(), title: "t".into(), tags: vec![], source: "ai".into(), model: None, cached: false, reason: None };
+        store_suggestion(&c, "idea", &tax, &s).unwrap();
+        assert!(cached_suggestion(&c, " idea ", &tax).unwrap().cached);
+        assert!(cached_suggestion(&c, "idea", &["a".to_string()]).is_none());
     }
 }

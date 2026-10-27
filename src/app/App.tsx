@@ -11,7 +11,7 @@ const NAV: Array<{ id: Route; label: string; hint?: string }> = [
   { id: "home", label: "Home" },
   { id: "library", label: "Media library" },
   { id: "thumbnails", label: "Thumbnail tester" },
-  { id: "ideas", label: "Idea organizer", hint: "Phase 3" },
+  { id: "ideas", label: "Idea organizer" },
 ];
 
 export default function App() {
@@ -49,7 +49,7 @@ export default function App() {
         {route === "home" && <Dashboard onNavigate={setRoute} />}
         {route === "library" && <LibraryPage />}
         {route === "thumbnails" && <ThumbnailsPage />}
-        {route === "ideas" && <IdeasPage />}
+        {route === "ideas" && <IdeasPage onOpenThumbnails={() => setRoute("thumbnails")} />}
       </main>
     </div>
   );

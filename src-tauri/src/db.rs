@@ -101,6 +101,14 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE thumbnails ADD COLUMN label TEXT;
      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
      CREATE TABLE IF NOT EXISTS ai_cache (cache_key TEXT PRIMARY KEY, response TEXT NOT NULL, created_at TEXT NOT NULL);",
+    // 2 — Phase 3: idea organizer.
+    "ALTER TABLE ideas ADD COLUMN title TEXT;
+     ALTER TABLE ideas ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+     ALTER TABLE ideas ADD COLUMN image_path TEXT;
+     ALTER TABLE ideas ADD COLUMN source TEXT NOT NULL DEFAULT 'text';
+     ALTER TABLE ideas ADD COLUMN suggestion_json TEXT;
+     ALTER TABLE ideas ADD COLUMN updated_at TEXT;
+     CREATE INDEX IF NOT EXISTS ideas_status ON ideas(status);",
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {

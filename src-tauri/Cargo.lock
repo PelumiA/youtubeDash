@@ -652,6 +652,7 @@ dependencies = [
 name = "creator-dashboard"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "chrono",
  "imagesize",

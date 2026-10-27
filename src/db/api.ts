@@ -6,6 +6,7 @@ import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import type { BatchSummary, MediaFile, MoveOp, ScanResult } from "../library/types";
 import type { ClipSection, CutAnalysis, ExportResult } from "../library/sections";
 import type { AiCritique } from "../thumbnails/score";
+import type { Suggestion } from "../ideas/taxonomy";
 import { demoInvoke } from "./demoBackend";
 
 export interface DashboardSummary {
@@ -20,6 +21,7 @@ export interface Project {
   id: number;
   title: string;
   slug: string;
+  category: string | null;
   status: string;
   createdAt: string;
   folderPath: string | null;
@@ -39,6 +41,52 @@ export interface ThumbnailRow {
   scoreTotal: number | null;
   breakdownJson: string | null;
   createdAt: string;
+}
+
+export type IdeaStatus = "inbox" | "project" | "archived";
+
+export interface Idea {
+  id: number;
+  title: string | null;
+  rawText: string | null;
+  ocrText: string | null;
+  category: string | null;
+  tags: string[];
+  hasImage: boolean;
+  source: "text" | "image" | "clipboard";
+  status: IdeaStatus;
+  projectId: number | null;
+  projectFolder: string | null;
+  suggestion: Suggestion | null;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface IdeaPatch {
+  title?: string;
+  rawText?: string;
+  ocrText?: string;
+  category?: string;
+  tags?: string[];
+  suggestion?: Suggestion;
+}
+
+export interface ScaffoldRequest {
+  ideaId: number;
+  projectsDir: string;
+  title: string;
+  category: string;
+  tags: string[];
+  date: string;
+  footer: string;
+}
+
+export interface ScaffoldPlan {
+  folder: string;
+  /** Relative to `folder`; folders end in "/". */
+  entries: string[];
+  brief: string;
+  script: string;
 }
 
 export interface AiStatus {
@@ -93,13 +141,23 @@ export const api = {
   clearApiKey: () => call<AiStatus>("clear_api_key"),
   critiqueThumbnail: (thumbnailId: number, imageBase64: string, platform: string, title: string) =>
     call<AiCritique>("critique_thumbnail", { thumbnailId, imageBase64, platform, title }),
+  captureIdea: (rawText: string, ocrText: string | null, imageBase64: string | null, source: Idea["source"]) =>
+    call<Idea>("capture_idea", { rawText, ocrText, imageBase64, source }),
+  listIdeas: (query: string, status: IdeaStatus | null = null) => call<Idea[]>("list_ideas", { query, status }),
+  updateIdea: (ideaId: number, patch: IdeaPatch) => call<Idea>("update_idea", { ideaId, patch }),
+  setIdeaStatus: (ideaId: number, status: "inbox" | "archived") => call<Idea>("set_idea_status", { ideaId, status }),
+  readIdeaImage: (ideaId: number) => call<ArrayBuffer>("read_idea_image", { ideaId }),
+  categorizeIdea: (ideaId: number, taxonomy: string[]) => call<Idea>("categorize_idea", { ideaId, taxonomy }),
+  previewScaffold: (request: ScaffoldRequest) => call<ScaffoldPlan>("preview_scaffold", { request }),
+  scaffoldIdea: (request: ScaffoldRequest) => call<Project>("scaffold_idea", { request }),
 };
 
-export async function pickImages(): Promise<string[]> {
+export async function pickImages(defaultPath?: string): Promise<string[]> {
   if (!inDesktopApp) return [];
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
     multiple: true,
+    defaultPath,
     title: "Choose thumbnail candidates",
     filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "gif", "bmp"] }],
   });
@@ -111,9 +169,9 @@ export function mediaUrl(path: string): string | null {
   return inDesktopApp ? convertFileSrc(path) : null;
 }
 
-export async function pickFolder(): Promise<string | null> {
-  if (!inDesktopApp) return "C:\\Demo\\Leg Day Shoot";
+export async function pickFolder(title = "Choose a media folder", demoPath = "C:\\Demo\\Leg Day Shoot"): Promise<string | null> {
+  if (!inDesktopApp) return demoPath;
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({ directory: true, multiple: false, title: "Choose a media folder" });
+  const picked = await open({ directory: true, multiple: false, title });
   return typeof picked === "string" ? picked : null;
 }

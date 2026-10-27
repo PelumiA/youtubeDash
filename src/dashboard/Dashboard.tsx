@@ -53,12 +53,15 @@ export default function Dashboard({ onNavigate }: { onNavigate: (r: Route) => vo
           </ul>
         </Panel>
         <Panel title="Projects" actions={<Button variant="ghost" onClick={() => onNavigate("thumbnails")}>Thumbnail tester →</Button>}>
-          {projects.length === 0 && <p className="px-4 py-6 text-sm text-muted">No projects yet. Create one in the thumbnail tester.</p>}
+          {projects.length === 0 && <p className="px-4 py-6 text-sm text-muted">No projects yet. Turn an idea into one, or create one in the thumbnail tester.</p>}
           <ul className="divide-y divide-line">
             {projects.slice(0, 6).map((p) => (
               <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
                 <span className="min-w-0">
-                  <span className="block truncate font-medium">{p.title}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="truncate font-medium">{p.title}</span>
+                    {p.category && <Badge tone="accent">{p.category}</Badge>}
+                  </span>
                   <span className="text-xs text-muted">
                     {p.thumbnailCount ? `${p.thumbnailCount} thumbnail${p.thumbnailCount === 1 ? "" : "s"} tested` : "No thumbnail test yet"}
                     {p.bestScore != null && ` · best ${p.bestScore.toFixed(0)}`}
@@ -83,9 +86,12 @@ export default function Dashboard({ onNavigate }: { onNavigate: (r: Route) => vo
               <span>Thumbnail tester</span>
               <Button variant="primary" onClick={() => onNavigate("thumbnails")}>Continue</Button>
             </li>
-            <li className="flex items-center justify-between px-4 py-3 text-muted">
-              <span>Idea organizer</span>
-              <Badge>Phase 3</Badge>
+            <li className="flex items-center justify-between px-4 py-3">
+              <span>
+                Idea organizer
+                {summary && summary.ideasInInbox > 0 && <span className="ml-2 text-xs text-muted">{summary.ideasInInbox} waiting in the inbox</span>}
+              </span>
+              <Button variant="primary" onClick={() => onNavigate("ideas")}>Continue</Button>
             </li>
           </ul>
         </Panel>

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, inDesktopApp, pickImages, type AiStatus, type Project, type ThumbnailRow } from "../db/api";
 import { Badge, Button, ConfirmDialog, Panel } from "../app/ui";
+import ApiKeyField from "../app/ApiKeyField";
+import { joinPath } from "../library/paths";
 import CandidateCard, { type CandidateView } from "./CandidateCard";
 import { analyzeBytes, critiqueJpegBase64, decode } from "./browserAnalyze";
 import type { Raster } from "./heuristics";
@@ -140,7 +142,7 @@ export default function ThumbnailsPage() {
   async function addCandidates() {
     if (projectId == null) return;
     try {
-      const paths = await pickImages();
+      const paths = await pickImages(project?.folderPath ? joinPath(project.folderPath, "thumbnails") : undefined);
       if (!paths.length) return;
       await api.addThumbnails(projectId, paths, platform);
       await load(projectId, platform);
@@ -352,20 +354,8 @@ export default function ThumbnailsPage() {
 function ScoringSettings({ weights, onWeights, ai, onAi }: { weights: Weights; onWeights: (w: Weights) => void; ai: AiStatus | null; onAi: (s: AiStatus) => void }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(weights);
-  const [key, setKey] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => setDraft(weights), [weights]);
   const total = Object.values(draft).reduce((a, b) => a + b, 0);
-
-  async function saveKey() {
-    try {
-      onAi(await api.setApiKey(key));
-      setKey("");
-      setMsg("Saved to the system keychain.");
-    } catch (e) {
-      setMsg(String(e));
-    }
-  }
 
   return (
     <Panel title={<button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">{open ? "▾" : "▸"} Scoring settings</button>} actions={ai && <Badge tone={ai.configured ? "ok" : "muted"}>{ai.configured ? `AI on (${ai.source === "env" ? "ANTHROPIC_API_KEY" : "keychain"})` : "AI off: heuristics only"}</Badge>}>
@@ -388,19 +378,7 @@ function ScoringSettings({ weights, onWeights, ai, onAi }: { weights: Weights; o
           </div>
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">AI critique (hook / curiosity)</h3>
-            {ai?.source === "env" ? (
-              <p className="text-sm">Using the ANTHROPIC_API_KEY environment variable.</p>
-            ) : (
-              <>
-                <div className="flex gap-2">
-                  <input type="password" autoComplete="off" className="flex-1 rounded-md border border-line bg-panel px-2 py-1.5 font-mono text-sm" placeholder={ai?.configured ? "Key saved. Paste to replace." : "sk-ant-…"} value={key} onChange={(e) => setKey(e.target.value)} aria-label="Anthropic API key" />
-                  <Button onClick={saveKey} disabled={!key.trim()}>Save</Button>
-                  {ai?.configured && <Button variant="ghost" onClick={async () => onAi(await api.clearApiKey())}>Remove</Button>}
-                </div>
-                <p className="mt-2 text-xs text-muted">Stored in your OS keychain, never in the app database or this window. Without a key the other four dimensions still score offline.</p>
-              </>
-            )}
-            {msg && <p className="mt-2 text-xs">{msg}</p>}
+            <ApiKeyField ai={ai} onAi={onAi} offlineNote="Without a key the other four dimensions still score offline." />
           </div>
         </div>
       )}
