@@ -1,13 +1,15 @@
 mod db;
 mod fsops;
 mod scan;
+mod sections;
+mod tools;
 
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 struct AppState {
     db: Mutex<Connection>,
@@ -42,9 +44,11 @@ struct ScanResponse {
 }
 
 #[tauri::command]
-async fn scan_folder(state: State<'_, AppState>, root: String) -> CmdResult<ScanResponse> {
+async fn scan_folder(app: AppHandle, state: State<'_, AppState>, root: String) -> CmdResult<ScanResponse> {
     let root = normalize_root(&root);
     let path = PathBuf::from(&root);
+    // Let the webview play media from this folder (and only folders the user has scanned).
+    app.asset_protocol_scope().allow_directory(&path, true).map_err(err)?;
     let out = tauri::async_runtime::spawn_blocking(move || scan::scan_dir(&path, scan::MAX_SCAN_FILES))
         .await
         .map_err(err)?
@@ -155,6 +159,102 @@ async fn find_duplicates(state: State<'_, AppState>, root: String) -> CmdResult<
 }
 
 #[tauri::command]
+fn list_sections(state: State<'_, AppState>, media_file_id: i64) -> CmdResult<Vec<sections::Section>> {
+    let conn = state.db.lock().map_err(err)?;
+    sections::list(&conn, media_file_id).map_err(err)
+}
+
+#[tauri::command]
+fn section_counts(state: State<'_, AppState>, root: String) -> CmdResult<HashMap<i64, i64>> {
+    let conn = state.db.lock().map_err(err)?;
+    Ok(sections::counts_under(&conn, &normalize_root(&root)).map_err(err)?.into_iter().collect())
+}
+
+#[tauri::command]
+fn save_section(state: State<'_, AppState>, section: sections::Section) -> CmdResult<sections::Section> {
+    let conn = state.db.lock().map_err(err)?;
+    sections::save(&conn, &section)
+}
+
+/// Removes the section; its export (if any) is archived, never deleted. Returns the archive batch.
+#[tauri::command]
+fn delete_section(state: State<'_, AppState>, root: String, section_id: i64) -> CmdResult<Option<String>> {
+    let mut conn = state.db.lock().map_err(err)?;
+    sections::delete(&mut conn, Path::new(&normalize_root(&root)), section_id)
+}
+
+#[tauri::command]
+async fn analyze_clip(path: String, noise_db: f64, min_silence_s: f64, scenes: bool, scene_threshold: f64) -> CmdResult<sections::CutAnalysis> {
+    tauri::async_runtime::spawn_blocking(move || sections::analyze(Path::new(&path), noise_db, min_silence_s, scenes, scene_threshold))
+        .await
+        .map_err(err)?
+}
+
+#[tauri::command]
+async fn clip_keyframes(path: String) -> CmdResult<Vec<f64>> {
+    tauri::async_runtime::spawn_blocking(move || sections::keyframes(Path::new(&path))).await.map_err(err)?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolStatus {
+    ffmpeg: Option<String>,
+    ffprobe: Option<String>,
+}
+
+#[tauri::command]
+fn tool_status() -> ToolStatus {
+    ToolStatus {
+        ffmpeg: tools::ffmpeg().map(|p| p.to_string_lossy().to_string()),
+        ffprobe: tools::ffprobe().map(|p| p.to_string_lossy().to_string()),
+    }
+}
+
+/// Exports sections as separate files into `<root>/_sections/<clip>/`. A section that was
+/// exported before has its previous file archived first. The source clip is only read.
+#[tauri::command]
+async fn export_sections(state: State<'_, AppState>, root: String, media_file_id: i64, section_ids: Vec<i64>) -> CmdResult<Vec<sections::ExportResult>> {
+    let root = PathBuf::from(normalize_root(&root));
+    let (source, all, chosen) = {
+        let mut conn = state.db.lock().map_err(err)?;
+        let media = db::get_media(&conn, &[media_file_id]).map_err(err)?.pop().ok_or("Clip not found.")?;
+        let all = sections::list(&conn, media_file_id).map_err(err)?;
+        let chosen: Vec<sections::Section> = all.iter().filter(|s| s.id.is_some_and(|id| section_ids.contains(&id))).cloned().collect();
+        for s in &chosen {
+            sections::archive_export(&mut conn, &root, s)?;
+            sections::set_exported(&conn, s.id.unwrap(), None).map_err(err)?;
+        }
+        (PathBuf::from(media.path), all, chosen)
+    };
+    let out_dir = sections::export_dir(&root, &source);
+    let results = tauri::async_runtime::spawn_blocking(move || -> CmdResult<Vec<sections::ExportResult>> {
+        let (has_video, _) = sections::stream_types(&source)?;
+        let keys = if has_video { sections::keyframes(&source)? } else { Vec::new() };
+        Ok(chosen
+            .iter()
+            .map(|s| {
+                // Number by position in the whole clip so file order matches the timeline.
+                let index = all.iter().position(|x| x.id == s.id).unwrap_or(0);
+                let id = s.id.unwrap();
+                match sections::export_one(&source, s, index, &out_dir, has_video, &keys) {
+                    Ok((path, mode)) => sections::ExportResult { section_id: id, path: Some(path.to_string_lossy().to_string()), mode: Some(mode), error: None },
+                    Err(e) => sections::ExportResult { section_id: id, path: None, mode: None, error: Some(e) },
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(err)??;
+    let conn = state.db.lock().map_err(err)?;
+    for r in &results {
+        if let Some(p) = &r.path {
+            sections::set_exported(&conn, r.section_id, Some(p)).map_err(err)?;
+        }
+    }
+    Ok(results)
+}
+
+#[tauri::command]
 fn dashboard_summary(state: State<'_, AppState>) -> CmdResult<db::DashboardSummary> {
     let conn = state.db.lock().map_err(err)?;
     db::dashboard_summary(&conn).map_err(err)
@@ -183,6 +283,14 @@ pub fn run() {
             archive_files,
             find_duplicates,
             dashboard_summary,
+            list_sections,
+            section_counts,
+            save_section,
+            delete_section,
+            analyze_clip,
+            clip_keyframes,
+            export_sections,
+            tool_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

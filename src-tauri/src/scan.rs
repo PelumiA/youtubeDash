@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
 use std::time::{Instant, SystemTime};
 use walkdir::WalkDir;
 
+use crate::tools;
+
 /// Folders the scanner never descends into: our own archive and hidden/system folders.
 pub const ARCHIVE_DIR: &str = "_archive";
+/// Where section exports land; skipped by the scanner so exports show under their source clip.
+pub const SECTIONS_DIR: &str = "_sections";
 pub const MAX_SCAN_FILES: usize = 10_000;
 const FINGERPRINT_CHUNK: u64 = 64 * 1024;
 
@@ -50,7 +52,7 @@ pub fn kind_for_ext(ext: &str) -> Option<&'static str> {
 }
 
 fn is_skipped_dir(name: &str) -> bool {
-    name == ARCHIVE_DIR || name.starts_with('.') || name == "$RECYCLE.BIN" || name == "node_modules"
+    name == ARCHIVE_DIR || name == SECTIONS_DIR || name.starts_with('.') || name == "$RECYCLE.BIN" || name == "node_modules"
 }
 
 /// Walks `root` and inventories media files, reading metadata on all cores.
@@ -215,25 +217,17 @@ struct Probe {
 }
 
 pub fn ffprobe_available() -> bool {
-    static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
-        let mut cmd = Command::new("ffprobe");
-        cmd.arg("-version");
-        hide_console(&mut cmd);
-        cmd.output().map(|o| o.status.success()).unwrap_or(false)
-    })
+    tools::ffprobe().is_some()
 }
 
 /// Video/audio metadata via ffprobe when it is on PATH. Optional: without it, files still
 /// scan and sort, just without duration/resolution.
 fn ffprobe(path: &Path) -> Option<Probe> {
-    if !ffprobe_available() {
-        return None;
-    }
-    let mut cmd = Command::new("ffprobe");
-    cmd.args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"]).arg(path);
-    hide_console(&mut cmd);
-    let out = cmd.output().ok()?;
+    let out = tools::command(tools::ffprobe()?)
+        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
+        .arg(path)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -257,13 +251,3 @@ fn ffprobe(path: &Path) -> Option<Probe> {
         .map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string());
     Some(Probe { width, height, duration_s, creation_date })
 }
-
-#[cfg(windows)]
-fn hide_console(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-fn hide_console(_cmd: &mut Command) {}

@@ -13,7 +13,10 @@
     "windows": [
       { "title": "Creator Dashboard", "width": 1280, "height": 820, "minWidth": 960, "minHeight": 600 }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": true, "scope": [] }
+    }
   },
   "bundle": {
     "active": true,

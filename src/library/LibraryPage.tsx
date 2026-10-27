@@ -4,6 +4,7 @@ import { Badge, Button, ConfirmDialog, Panel, formatBytes, formatDuration } from
 import { MAX_FILES_PER_RUN, PRESETS, guessType, planRenames, slugify, type PlannedOp, type PlanInput } from "./renameEngine";
 import { basename, joinPath } from "./paths";
 import { TAG_PALETTE, tagColor } from "./tags";
+import ClipEditor from "./ClipEditor";
 import type { BatchSummary, MediaFile, ScanResult } from "./types";
 
 type Tab = "inventory" | "duplicates" | "history";
@@ -25,6 +26,8 @@ export default function LibraryPage() {
   const [planMs, setPlanMs] = useState(0);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [clip, setClip] = useState<MediaFile | null>(null);
+  const [sectionCounts, setSectionCounts] = useState<Record<string, number>>({});
 
   const preset = PRESETS.find((p) => p.id === presetId)!;
   const files = scan?.files ?? [];
@@ -32,6 +35,10 @@ export default function LibraryPage() {
 
   // Any change to the inputs invalidates the dry-run; the user must preview again.
   useEffect(() => setPlan(null), [presetId, slug, sortIntoFolders, typeOverrides, selected, scan]);
+
+  useEffect(() => {
+    if (scan && !clip) api.sectionCounts(scan.root).then(setSectionCounts, () => setSectionCounts({}));
+  }, [scan, clip]);
 
   async function runScan(root: string, keepSelection = false) {
     setScanning(true);
@@ -129,6 +136,25 @@ export default function LibraryPage() {
     );
   }
 
+  const noticeBanner = notice && (
+    <div className="flex items-center justify-between rounded-md bg-ok/10 px-3 py-2 text-sm text-ok">
+      <span>{notice.text}</span>
+      <span className="flex gap-2">
+        {notice.batchId && <Button onClick={() => undo(notice.batchId!)}>Undo</Button>}
+        <Button variant="ghost" onClick={() => setNotice(null)}>Dismiss</Button>
+      </span>
+    </div>
+  );
+
+  if (clip) {
+    return (
+      <>
+        {noticeBanner && <div className="px-6 pt-6">{noticeBanner}</div>}
+        <ClipEditor key={clip.id} file={clip} root={scan.root} onBack={() => { setClip(null); setNotice(null); }} onNotice={(text, batchId) => setNotice({ text, batchId })} />
+      </>
+    );
+  }
+
   const allSelected = selected.size === files.length && files.length > 0;
 
   return (
@@ -150,15 +176,7 @@ export default function LibraryPage() {
       </div>
 
       {error && <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>}
-      {notice && (
-        <div className="flex items-center justify-between rounded-md bg-ok/10 px-3 py-2 text-sm text-ok">
-          <span>{notice.text}</span>
-          <span className="flex gap-2">
-            {notice.batchId && <Button onClick={() => undo(notice.batchId!)}>Undo</Button>}
-            <Button variant="ghost" onClick={() => setNotice(null)}>Dismiss</Button>
-          </span>
-        </div>
-      )}
+      {noticeBanner}
 
       <Panel title="Naming">
         <div className="flex flex-wrap items-end gap-4 px-4 py-3">
@@ -253,6 +271,7 @@ export default function LibraryPage() {
                   <th className="px-3 py-2 font-medium">Duration</th>
                   <th className="px-3 py-2 font-medium">Date</th>
                   <th className="px-3 py-2 font-medium">Tags</th>
+                  <th className="px-3 py-2 font-medium">Sections</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -285,6 +304,13 @@ export default function LibraryPage() {
                     <td className="px-3 py-1.5 tabular-nums text-muted">{f.capturedDate}</td>
                     <td className="px-3 py-1.5">
                       <TagCell file={f} onToggle={(t) => toggleTag(f, t)} />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {f.kind !== "photo" && (
+                        <Button variant="ghost" className="!px-2 !py-0.5 text-xs" onClick={() => setClip(f)}>
+                          {sectionCounts[f.id] ? `${sectionCounts[f.id]} sections` : "Split…"}
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}

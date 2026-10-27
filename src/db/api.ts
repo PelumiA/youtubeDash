@@ -2,8 +2,9 @@
  * Typed bridge to the Rust commands. Outside the desktop shell (plain `npm run dev` in a
  * browser) calls are routed to an in-memory demo backend so the UI can still be explored.
  */
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import type { BatchSummary, MediaFile, MoveOp, ScanResult } from "../library/types";
+import type { ClipSection, CutAnalysis, ExportResult } from "../library/sections";
 import { demoInvoke } from "./demoBackend";
 
 export interface DashboardSummary {
@@ -32,7 +33,23 @@ export const api = {
   archiveFiles: (root: string, fileIds: number[]) => call<string>("archive_files", { root, fileIds }),
   findDuplicates: (root: string) => call<MediaFile[][]>("find_duplicates", { root }),
   dashboardSummary: () => call<DashboardSummary>("dashboard_summary"),
+  toolStatus: () => call<{ ffmpeg: string | null; ffprobe: string | null }>("tool_status"),
+  listSections: (mediaFileId: number) => call<ClipSection[]>("list_sections", { mediaFileId }),
+  sectionCounts: (root: string) => call<Record<string, number>>("section_counts", { root }),
+  saveSection: (section: ClipSection) => call<ClipSection>("save_section", { section }),
+  /** Returns the archive batch id when an export was moved to `_archive/`. */
+  deleteSection: (root: string, sectionId: number) => call<string | null>("delete_section", { root, sectionId }),
+  analyzeClip: (path: string, opts: { noiseDb: number; minSilenceS: number; scenes: boolean; sceneThreshold: number }) =>
+    call<CutAnalysis>("analyze_clip", { path, ...opts }),
+  clipKeyframes: (path: string) => call<number[]>("clip_keyframes", { path }),
+  exportSections: (root: string, mediaFileId: number, sectionIds: number[]) =>
+    call<ExportResult[]>("export_sections", { root, mediaFileId, sectionIds }),
 };
+
+/** Playable URL for a local file (desktop only; the folder must have been scanned). */
+export function mediaUrl(path: string): string | null {
+  return inDesktopApp ? convertFileSrc(path) : null;
+}
 
 export async function pickFolder(): Promise<string | null> {
   if (!inDesktopApp) return "C:\\Demo\\Leg Day Shoot";

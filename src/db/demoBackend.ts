@@ -4,6 +4,7 @@
  * and undoable, overwrites are refused, archive is a move. It never touches real files.
  */
 import type { BatchSummary, MediaFile, MoveOp } from "../library/types";
+import type { ClipSection } from "../library/sections";
 import { basename, dirname, joinPath, pathKey } from "../library/paths";
 
 const ROOT = "C:\\Demo\\Leg Day Shoot";
@@ -47,6 +48,9 @@ interface LoggedOp extends MoveOp {
   undoneAt: string | null;
 }
 const log: LoggedOp[] = [];
+
+let nextSectionId = 1;
+const sections: ClipSection[] = [];
 
 const visible = () => files.filter((f) => !pathKey(f.path).includes("/_archive/"));
 
@@ -104,6 +108,53 @@ const handlers: Record<string, (args: any) => unknown> = {
     const groups = new Map<string, MediaFile[]>();
     for (const f of visible()) groups.set(f.fileHash, [...(groups.get(f.fileHash) ?? []), f]);
     return [...groups.values()].filter((g) => g.length > 1);
+  },
+  tool_status: () => ({ ffmpeg: "demo", ffprobe: "demo" }),
+  list_sections: ({ mediaFileId }: { mediaFileId: number }) =>
+    sections.filter((s) => s.mediaFileId === mediaFileId).sort((a, b) => a.startS - b.startS),
+  section_counts: () => {
+    const counts: Record<string, number> = {};
+    for (const s of sections) counts[s.mediaFileId] = (counts[s.mediaFileId] ?? 0) + 1;
+    return counts;
+  },
+  save_section: ({ section }: { section: ClipSection }) => {
+    if (!(section.endS > section.startS)) throw new Error("A section must end after it starts.");
+    const existing = sections.find((s) => s.id === section.id);
+    if (existing) return Object.assign(existing, section);
+    const created = { ...section, id: nextSectionId++ };
+    sections.push(created);
+    return created;
+  },
+  delete_section: ({ sectionId }: { sectionId: number }) => {
+    const i = sections.findIndex((s) => s.id === sectionId);
+    const had = sections[i]?.exportedPath;
+    sections.splice(i, 1);
+    return had ? `demo-archive-${sectionId}` : null;
+  },
+  // Fake but plausible: a pause roughly every sixth of the clip, keyframes every 2 s.
+  analyze_clip: ({ path, scenes }: { path: string; scenes: boolean }) => {
+    const d = files.find((f) => f.path === path)?.durationS ?? 600;
+    const silences = [1, 2, 3, 4, 5].map((i) => ({ startS: (d * i) / 6 - 0.8, endS: (d * i) / 6 + 0.6 }));
+    return {
+      silences,
+      scenes: scenes ? [1, 2, 3].map((i) => Math.round((d * i) / 4)) : [],
+      suggestions: silences.map((s) => Math.round(((s.startS + s.endS) / 2) * 100) / 100),
+    };
+  },
+  clip_keyframes: ({ path }: { path: string }) => {
+    const d = files.find((f) => f.path === path)?.durationS ?? 600;
+    return Array.from({ length: Math.floor(d / 2) + 1 }, (_, i) => i * 2);
+  },
+  export_sections: ({ mediaFileId, sectionIds }: { mediaFileId: number; sectionIds: number[] }) => {
+    const clip = files.find((f) => f.id === mediaFileId)!;
+    const stem = clip.filename.replace(/\.[^.]+$/, "");
+    return sectionIds.map((id) => {
+      const s = sections.find((x) => x.id === id)!;
+      const idx = sections.filter((x) => x.mediaFileId === mediaFileId).sort((a, b) => a.startS - b.startS).indexOf(s);
+      const name = `${String(idx + 1).padStart(2, "0")}_${s.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.mp4`;
+      s.exportedPath = joinPath(ROOT, "_sections", stem, name);
+      return { sectionId: id, path: s.exportedPath, mode: s.startS % 2 === 0 ? "copy" : "encode", error: null };
+    });
   },
   dashboard_summary: () => ({
     filesIndexed: visible().length,
