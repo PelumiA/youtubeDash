@@ -1,0 +1,27 @@
+[package]
+name = "creator-dashboard"
+version = "0.1.0"
+description = "Local-first creator dashboard"
+edition = "2021"
+
+[lib]
+name = "creator_dashboard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+walkdir = "2"
+blake3 = "1"
+chrono = "0.4"
+imagesize = "0.13"
+kamadak-exif = "0.5"
+
+[dev-dependencies]
+tempfile = "3"
