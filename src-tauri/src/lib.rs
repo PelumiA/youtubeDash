@@ -330,39 +330,58 @@ fn set_setting(state: State<'_, AppState>, key: String, value: String) -> CmdRes
 }
 
 #[tauri::command]
-fn ai_status() -> ai::AiStatus {
-    ai::status()
+fn ai_status(state: State<'_, AppState>) -> CmdResult<ai::AiStatus> {
+    let conn = state.db.lock().map_err(err)?;
+    Ok(ai::status(&conn))
+}
+
+/// Chooses the AI provider (and, for OpenRouter, the model). Keys are stored separately.
+#[tauri::command]
+fn set_ai_provider(state: State<'_, AppState>, provider: String, model: Option<String>) -> CmdResult<ai::AiStatus> {
+    let p = ai::Provider::parse(&provider)?;
+    let conn = state.db.lock().map_err(err)?;
+    if let Some(m) = model {
+        if !ai::valid_openrouter_model(&m) {
+            return Err(format!("\"{}\" isn't an OpenRouter model id (they look like {}).", m.trim(), ai::OPENROUTER_DEFAULT_MODEL));
+        }
+        thumbs::set_setting(&conn, ai::OPENROUTER_MODEL_SETTING, m.trim()).map_err(err)?;
+    }
+    thumbs::set_setting(&conn, ai::PROVIDER_SETTING, p.id()).map_err(err)?;
+    Ok(ai::status(&conn))
 }
 
 #[tauri::command]
-fn set_api_key(key: String) -> CmdResult<ai::AiStatus> {
-    ai::set_key(&key)?;
-    Ok(ai::status())
+fn set_api_key(state: State<'_, AppState>, provider: String, key: String) -> CmdResult<ai::AiStatus> {
+    ai::set_key(ai::Provider::parse(&provider)?, &key)?;
+    let conn = state.db.lock().map_err(err)?;
+    Ok(ai::status(&conn))
 }
 
 #[tauri::command]
-fn clear_api_key() -> CmdResult<ai::AiStatus> {
-    ai::clear_key()?;
-    Ok(ai::status())
+fn clear_api_key(state: State<'_, AppState>, provider: String) -> CmdResult<ai::AiStatus> {
+    ai::clear_key(ai::Provider::parse(&provider)?)?;
+    let conn = state.db.lock().map_err(err)?;
+    Ok(ai::status(&conn))
 }
 
 /// AI hook critique for one candidate. `image_base64` is a JPEG the frontend renders at the
 /// platform's upload size. Cached per image fingerprint + platform + title.
 #[tauri::command]
 async fn critique_thumbnail(state: State<'_, AppState>, thumbnail_id: i64, image_base64: String, platform: String, title: String) -> CmdResult<ai::Critique> {
-    let hash = {
+    let (hash, cfg) = {
         let conn = state.db.lock().map_err(err)?;
         let t = thumbs::get_thumbnail(&conn, thumbnail_id).map_err(err)?.ok_or("Thumbnail not found.")?;
         let hash = t.file_hash.unwrap_or_default();
-        if let Some(c) = ai::cached(&conn, &hash, &platform, &title) {
+        let cfg = ai::config(&conn);
+        if let Some(c) = ai::cached(&conn, &cfg, &hash, &platform, &title) {
             return Ok(c);
         }
-        hash
+        (hash, cfg)
     };
-    let (p, t) = (platform.clone(), title.clone());
-    let critique = tauri::async_runtime::spawn_blocking(move || ai::request_critique(&image_base64, &p, &t)).await.map_err(err)??;
+    let (p, t, c) = (platform.clone(), title.clone(), cfg.clone());
+    let critique = tauri::async_runtime::spawn_blocking(move || ai::request_critique(&c, &image_base64, &p, &t)).await.map_err(err)??;
     let conn = state.db.lock().map_err(err)?;
-    ai::store(&conn, &hash, &platform, &title, &critique).map_err(err)?;
+    ai::store(&conn, &cfg, &hash, &platform, &title, &critique).map_err(err)?;
     Ok(critique)
 }
 
@@ -404,18 +423,19 @@ fn read_idea_image(state: State<'_, AppState>, idea_id: i64) -> CmdResult<tauri:
 /// a suggestion; nothing is applied until the user confirms.
 #[tauri::command]
 async fn categorize_idea(state: State<'_, AppState>, idea_id: i64, taxonomy: Vec<String>) -> CmdResult<ideas::Idea> {
-    let text = {
+    let (text, cfg) = {
         let conn = state.db.lock().map_err(err)?;
         let text = ideas::get(&conn, idea_id)?.full_text();
-        if let Some(s) = ai::cached_suggestion(&conn, &text, &taxonomy) {
+        let cfg = ai::config(&conn);
+        if let Some(s) = ai::cached_suggestion(&conn, &cfg, &text, &taxonomy) {
             return ideas::update(&conn, idea_id, &ideas::IdeaPatch { suggestion: Some(s), ..Default::default() });
         }
-        text
+        (text, cfg)
     };
-    let (t, tax) = (text.clone(), taxonomy.clone());
-    let suggestion = tauri::async_runtime::spawn_blocking(move || ai::request_categorization(&t, &tax)).await.map_err(err)??;
+    let (t, tax, c) = (text.clone(), taxonomy.clone(), cfg.clone());
+    let suggestion = tauri::async_runtime::spawn_blocking(move || ai::request_categorization(&c, &t, &tax)).await.map_err(err)??;
     let conn = state.db.lock().map_err(err)?;
-    ai::store_suggestion(&conn, &text, &taxonomy, &suggestion).map_err(err)?;
+    ai::store_suggestion(&conn, &cfg, &text, &taxonomy, &suggestion).map_err(err)?;
     ideas::update(&conn, idea_id, &ideas::IdeaPatch { suggestion: Some(suggestion), ..Default::default() })
 }
 
@@ -516,6 +536,7 @@ pub fn run() {
             get_setting,
             set_setting,
             ai_status,
+            set_ai_provider,
             set_api_key,
             clear_api_key,
             critique_thumbnail,

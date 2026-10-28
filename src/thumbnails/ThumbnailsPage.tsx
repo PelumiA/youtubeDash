@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, inDesktopApp, pickImages, type AiStatus, type Project, type ThumbnailRow } from "../db/api";
 import { Badge, Button, ConfirmDialog, Panel } from "../app/ui";
-import ApiKeyField from "../app/ApiKeyField";
+import AiSettingsField, { aiBadgeText, aiDestination } from "../app/AiSettingsField";
 import type { Focus } from "../app/App";
 import ProjectSummaryDialog from "../app/ProjectSummaryDialog";
 import { SETTINGS } from "../app/settings";
@@ -347,9 +347,9 @@ export default function ThumbnailsPage({ focus }: { focus?: Focus | null }) {
       <ScoringSettings weights={weights} onWeights={changeWeights} ai={ai} onAi={setAi} />
 
       {consent && (
-        <ConfirmDialog title="Send to Claude for critique?" confirmLabel="Send" onConfirm={() => runCritique(consent.ids)} onCancel={() => setConsent(null)}>
+        <ConfirmDialog title="Send for AI critique?" confirmLabel="Send" onConfirm={() => runCritique(consent.ids)} onCancel={() => setConsent(null)}>
           <p>
-            {consent.ids.length === 1 ? "This thumbnail" : `${consent.ids.length} thumbnails`} will be sent to Anthropic's API ({ai?.model}) as {spec.width}×{spec.height} JPEG
+            {consent.ids.length === 1 ? "This thumbnail" : `${consent.ids.length} thumbnails`} will be sent to {aiDestination(ai)} as {spec.width}×{spec.height} JPEG
             {videoTitle.trim() ? <>, with the title "{videoTitle.trim()}"</> : null}. Nothing else leaves this computer.
           </p>
           <p className="text-muted">Each critique is a single API call billed to your key, and is cached so the same image isn't sent twice. You won't be asked again this session.</p>
@@ -362,7 +362,7 @@ export default function ThumbnailsPage({ focus }: { focus?: Focus | null }) {
 function ScoringSettings({ weights, onWeights, ai, onAi }: { weights: Weights; onWeights: (w: Weights) => void; ai: AiStatus | null; onAi: (s: AiStatus) => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <Panel title={<button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">{open ? "▾" : "▸"} Scoring settings</button>} actions={ai && <Badge tone={ai.configured ? "ok" : "muted"}>{ai.configured ? `AI on (${ai.source === "env" ? "ANTHROPIC_API_KEY" : "keychain"})` : "AI off: heuristics only"}</Badge>}>
+    <Panel title={<button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">{open ? "▾" : "▸"} Scoring settings</button>} actions={ai && <Badge tone={ai.configured ? "ok" : "muted"}>{ai.configured ? aiBadgeText(ai) : "AI off: heuristics only"}</Badge>}>
       {open && (
         <div className="grid gap-6 px-4 py-4 md:grid-cols-2">
           <div>
@@ -371,7 +371,7 @@ function ScoringSettings({ weights, onWeights, ai, onAi }: { weights: Weights; o
           </div>
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">AI critique (hook / curiosity)</h3>
-            <ApiKeyField ai={ai} onAi={onAi} offlineNote="Without a key the other four dimensions still score offline." />
+            <AiSettingsField ai={ai} onAi={onAi} offlineNote="Without a key the other four dimensions still score offline." />
           </div>
         </div>
       )}

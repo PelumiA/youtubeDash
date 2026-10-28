@@ -110,10 +110,25 @@ export interface StarterFolder {
   status: "missing" | "exists" | "created";
 }
 
+export type AiProviderId = "anthropic" | "openrouter";
+
+export interface AiProviderStatus {
+  id: AiProviderId;
+  label: string;
+  configured: boolean;
+  source: "env" | "keychain" | null;
+  /** Environment variable that overrides the stored key. */
+  envVar: string;
+}
+
 export interface AiStatus {
+  /** The provider in use and whether it has a key. */
+  provider: AiProviderId;
+  providerLabel: string;
   configured: boolean;
   source: "env" | "keychain" | null;
   model: string;
+  providers: AiProviderStatus[];
 }
 
 export const inDesktopApp = isTauri();
@@ -158,8 +173,10 @@ export const api = {
   getSetting: (key: string) => call<string | null>("get_setting", { key }),
   setSetting: (key: string, value: string) => call<void>("set_setting", { key, value }),
   aiStatus: () => call<AiStatus>("ai_status"),
-  setApiKey: (key: string) => call<AiStatus>("set_api_key", { key }),
-  clearApiKey: () => call<AiStatus>("clear_api_key"),
+  /** `model` is the OpenRouter model id; pass null to keep the saved one. */
+  setAiProvider: (provider: AiProviderId, model: string | null) => call<AiStatus>("set_ai_provider", { provider, model }),
+  setApiKey: (provider: AiProviderId, key: string) => call<AiStatus>("set_api_key", { provider, key }),
+  clearApiKey: (provider: AiProviderId) => call<AiStatus>("clear_api_key", { provider }),
   critiqueThumbnail: (thumbnailId: number, imageBase64: string, platform: string, title: string) =>
     call<AiCritique>("critique_thumbnail", { thumbnailId, imageBase64, platform, title }),
   captureIdea: (rawText: string, ocrText: string | null, imageBase64: string | null, source: Idea["source"]) =>

@@ -120,7 +120,7 @@ export default function CandidateCard({ c, spec, title, isWinner, leads, onPickW
               </ul>
               {d.id === "hook" && !b?.ai && (
                 <Button className="mt-1.5 !py-1 text-xs" onClick={onCritique} disabled={c.aiBusy || c.status !== "ready"}>
-                  {c.aiBusy ? "Asking Claude…" : "Get AI critique"}
+                  {c.aiBusy ? "Asking the AI…" : "Get AI critique"}
                 </Button>
               )}
               {d.id === "hook" && b?.ai && <p className="mt-1 text-[10px] text-muted">Advisory · {b.ai.model}{b.ai.cached ? " · cached" : ""}</p>}

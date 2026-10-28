@@ -75,7 +75,11 @@ const thumbnails: ThumbnailRow[] = Object.keys(fixtureUrls).map((name) => ({
   createdAt: "2026-10-26T10:00:00",
 }));
 const settings: Record<string, string> = {};
-let demoKey = false;
+const demoKeys: Record<string, boolean> = { anthropic: false, openrouter: false };
+let demoProvider: "anthropic" | "openrouter" = "anthropic";
+let demoRouterModel = "anthropic/claude-opus-5.5";
+const demoModel = () => (demoProvider === "openrouter" ? demoRouterModel : "claude-opus-5-5");
+const PROVIDER_LABELS = { anthropic: "Anthropic API", openrouter: "OpenRouter" } as const;
 
 let nextIdeaId = 1;
 const idea = (patch: Partial<Idea>): Idea => ({
@@ -260,23 +264,41 @@ const handlers: Record<string, (args: any) => unknown> = {
   set_setting: ({ key, value }: { key: string; value: string }) => {
     settings[key] = value;
   },
-  ai_status: () => ({ configured: demoKey, source: demoKey ? "keychain" : null, model: "claude-opus-5-5" }),
-  set_api_key: ({ key }: { key: string }) => {
-    if (!key.startsWith("sk-ant-")) throw new Error("That doesn't look like an Anthropic API key (they start with sk-ant-).");
-    demoKey = true;
+  ai_status: () => ({
+    provider: demoProvider,
+    providerLabel: PROVIDER_LABELS[demoProvider],
+    configured: demoKeys[demoProvider],
+    source: demoKeys[demoProvider] ? "keychain" : null,
+    model: demoModel(),
+    providers: (["anthropic", "openrouter"] as const).map((id) => ({
+      id, label: PROVIDER_LABELS[id], configured: demoKeys[id], source: demoKeys[id] ? "keychain" : null, envVar: id === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENROUTER_API_KEY",
+    })),
+  }),
+  set_ai_provider: ({ provider, model }: { provider: "anthropic" | "openrouter"; model: string | null }) => {
+    if (model != null) {
+      if (!/^[^\s/]+\/\S+$/.test(model.trim())) throw new Error(`"${model.trim()}" isn't an OpenRouter model id (they look like anthropic/claude-opus-5.5).`);
+      demoRouterModel = model.trim();
+    }
+    demoProvider = provider;
     return handlers.ai_status({});
   },
-  clear_api_key: () => {
-    demoKey = false;
+  set_api_key: ({ provider, key }: { provider: "anthropic" | "openrouter"; key: string }) => {
+    if (provider === "anthropic" && !key.startsWith("sk-ant-")) throw new Error("That doesn't look like an Anthropic API key (they start with sk-ant-).");
+    if (provider === "openrouter" && (key.trim().length < 20 || /\s/.test(key.trim()))) throw new Error("That doesn't look like an OpenRouter API key.");
+    demoKeys[provider] = true;
+    return handlers.ai_status({});
+  },
+  clear_api_key: ({ provider }: { provider: "anthropic" | "openrouter" }) => {
+    demoKeys[provider] = false;
     return handlers.ai_status({});
   },
   // Canned critique so the flow can be clicked through; the real one calls Claude from Rust.
   critique_thumbnail: ({ thumbnailId }: { thumbnailId: number }) => {
-    if (!demoKey) throw new Error("No API key set. Add one under Scoring settings to enable the AI critique.");
+    if (!demoKeys[demoProvider]) throw new Error(`No ${PROVIDER_LABELS[demoProvider]} key set. Add one in Settings to use the AI features.`);
     const t = thumbnails.find((x) => x.id === thumbnailId)!;
     const strong = t.path.endsWith("strong.png");
     return {
-      model: "claude-opus-5-5 (demo)",
+      model: `${demoModel()} (demo)`,
       hookScore: strong ? 7 : t.path.endsWith("cluttered.png") ? 4 : 3,
       readsInOneSecond: strong,
       emotion: strong ? "confident relief" : "confusion",
@@ -324,10 +346,10 @@ const handlers: Record<string, (args: any) => unknown> = {
   },
   // Canned "Claude" suggestion (the keyword suggestion relabelled) so the flow can be clicked through.
   categorize_idea: ({ ideaId, taxonomy }: { ideaId: number; taxonomy: string[] }) => {
-    if (!demoKey) throw new Error("No API key set. Add an Anthropic API key in settings to use Claude.");
+    if (!demoKeys[demoProvider]) throw new Error(`No ${PROVIDER_LABELS[demoProvider]} key set. Add one in Settings to use the AI features.`);
     const i = ideas.find((x) => x.id === ideaId)!;
     const local = suggestLocally([i.rawText, i.ocrText].filter(Boolean).join("\n\n"), taxonomy);
-    i.suggestion = { ...local, source: "ai", model: "claude-opus-5-5 (demo)", reason: null };
+    i.suggestion = { ...local, source: "ai", model: `${demoModel()} (demo)`, reason: null };
     return ideaView(i);
   },
   preview_scaffold: ({ request }: { request: ScaffoldRequest }) => demoPlan(request),

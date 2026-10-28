@@ -4,7 +4,7 @@ import { TAXONOMY_PRESETS, localDate } from "../ideas/taxonomy";
 import { PRESETS } from "../library/renameEngine";
 import { joinPath } from "../library/paths";
 import { PLATFORMS, type PlatformId } from "../thumbnails/platforms";
-import ApiKeyField from "./ApiKeyField";
+import AiSettingsField from "./AiSettingsField";
 import { SETTINGS, setJson } from "./settings";
 import { Badge, Button } from "./ui";
 
@@ -25,7 +25,7 @@ const PACKS: Array<{ id: Pack; label: string; blurb: string; starter: string[] }
   },
 ];
 
-const STEPS = ["Preset pack", "Media folder", "Projects folder", "Thumbnails", "Claude"];
+const STEPS = ["Preset pack", "Media folder", "Projects folder", "Thumbnails", "AI"];
 
 /** First run: a few choices with sensible defaults. Every step can be skipped and redone in Settings. */
 export default function Onboarding({ onDone }: { onDone: () => void }) {
@@ -157,8 +157,8 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
 
           {step === 4 && (
             <>
-              <p>Optional. With an Anthropic API key, Claude can critique thumbnail hooks and suggest idea categories. It only runs when you ask, and you confirm what is sent. Everything else works offline.</p>
-              <ApiKeyField ai={ai} onAi={setAi} offlineNote="You can add or remove it later in Settings." />
+              <p>Optional. With an Anthropic or OpenRouter API key, the AI can critique thumbnail hooks and suggest idea categories. It only runs when you ask, and you confirm what is sent. Everything else works offline.</p>
+              <AiSettingsField ai={ai} onAi={setAi} offlineNote="You can add or remove it later in Settings." />
             </>
           )}
 

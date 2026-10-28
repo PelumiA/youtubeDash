@@ -115,7 +115,7 @@ under Scoring settings:
 | Subject clarity | 25 | Saliency grid (color distance + edges), largest salient region: size, dominance, number of competing elements |
 | Safe zones | 20 | Overlap of text and the main subject with platform overlays: YouTube duration badge, hover buttons, progress bar. Instagram: like/comment/share rail, caption area, profile-grid 3:4 crop |
 | Color & contrast | 15 | Tonal spread, saturation, subject/background separation, red/green-only color-blind check |
-| Hook / curiosity | 10 | Claude (`claude-opus-5-5`) vision critique. Advisory, and only runs when you ask |
+| Hook / curiosity | 10 | AI vision critique (Claude by default; see [AI providers](#ai-providers)). Advisory, and only runs when you ask |
 
 - **Deterministic.** The first four dimensions run offline and give the same score for the
   same image (decode, resize and OCR are pinned). The fixture tests check this.
@@ -124,7 +124,7 @@ under Scoring settings:
 - **Offline fallback.** Without an API key or network, the hook shows "unavailable" and the
   score is out of the remaining 90 points.
 - **AI privacy.** Before anything is sent you confirm: the image (as a JPEG at upload size)
-  and the video title. The key lives in the OS keychain (or `ANTHROPIC_API_KEY`) and stays
+  and the video title. The key lives in the OS keychain (or an environment variable) and stays
   in the Rust backend. Results are cached per image + platform + title. Requests opt in to
   server-side refusal fallback (`fallbacks: "default"`).
 - **Files untouched.** Candidate images are referenced in place. Adding or removing one
@@ -145,7 +145,7 @@ Each idea gets a suggestion of category, working title and tags:
 - **Offline, always.** A keyword match picks the category and says which words matched; the
   first real sentence becomes the title (app chrome like handles, timestamps and like counts is
   skipped); hashtags and frequent topic words become tags.
-- **Claude, when you ask.** With an API key, "Ask Claude" sends the idea's text (typed and OCR'd,
+- **AI, when you ask.** With an API key, "Ask the AI" sends the idea's text (typed and OCR'd,
   not the image) and your category list. After you confirm once, new ideas that session get
   Claude's suggestion automatically. The category is constrained to your list. Cached per text
   + categories.
@@ -186,3 +186,18 @@ To regenerate the test screenshot, run `node scripts/make-idea-fixtures.mjs`.
   project, its idea, the thumbnail scores per dimension, the winner and why it leads, and the AI
   critique if one was run. Copy it, or save it where you choose (the system dialog asks before
   replacing a file).
+
+## AI providers
+
+The two AI features (thumbnail hook critique, idea categorization) are optional and use
+whichever provider you pick under **Settings → AI**:
+
+| Provider | Key | Model |
+|---|---|---|
+| Anthropic API (default) | console.anthropic.com, or `ANTHROPIC_API_KEY` | `claude-opus-5-5`, with refusal fallback and structured output |
+| OpenRouter | openrouter.ai, or `OPENROUTER_API_KEY` | Any OpenRouter model id that accepts images and structured output; default `anthropic/claude-opus-5.5` |
+
+OpenRouter requests use a strict JSON schema and are routed only to providers that support
+every parameter (`require_parameters`) and don't collect prompts (`data_collection: "deny"`).
+Each provider's key is kept separately in the OS keychain; results are cached per provider and
+model. A Claude Pro/Max subscription doesn't include API access, so it can't be used here.

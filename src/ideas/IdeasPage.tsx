@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { api, pickFolder, type AiStatus, type Idea, type IdeaPatch, type IdeaStatus, type ScaffoldPlan, type ScaffoldRequest } from "../db/api";
 import { Badge, Button, ConfirmDialog, Panel } from "../app/ui";
-import ApiKeyField from "../app/ApiKeyField";
+import AiSettingsField, { aiDestination } from "../app/AiSettingsField";
 import type { Focus, Navigate } from "../app/App";
 import ProjectSummaryDialog from "../app/ProjectSummaryDialog";
 import { SETTINGS } from "../app/settings";
@@ -291,7 +291,7 @@ export default function IdeasPage({ focus, onNavigate }: { focus?: Focus | null;
     >
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Idea organizer</h1>
-        <span className="text-xs text-muted">Screenshots are read on this computer. Nothing is sent anywhere unless you ask Claude.</span>
+        <span className="text-xs text-muted">Screenshots are read on this computer. Nothing is sent anywhere unless you ask the AI.</span>
       </div>
 
       {error && (
@@ -433,12 +433,12 @@ export default function IdeasPage({ focus, onNavigate }: { focus?: Focus | null;
       {summaryFor != null && <ProjectSummaryDialog projectId={summaryFor} onClose={() => setSummaryFor(null)} />}
 
       {consentFor != null && (
-        <ConfirmDialog title="Ask Claude to categorize?" confirmLabel="Send" onConfirm={() => runClaude(consentFor)} onCancel={() => setConsentFor(null)}>
+        <ConfirmDialog title="Ask the AI to categorize?" confirmLabel="Send" onConfirm={() => runClaude(consentFor)} onCancel={() => setConsentFor(null)}>
           <p>
             The idea's text ({ideaText(ideas.find((i) => i.id === consentFor)!).length.toLocaleString()} characters, including text read from the screenshot) and your category list will be sent to
-            Anthropic's API ({ai?.model}). The screenshot itself is not sent.
+            {aiDestination(ai)}. The screenshot itself is not sent.
           </p>
-          <p className="text-muted">One small API call per idea, billed to your key and cached. You won't be asked again this session: new ideas will get Claude's suggestion automatically.</p>
+          <p className="text-muted">One small API call per idea, billed to your key and cached. You won't be asked again this session: new ideas will get the AI suggestion automatically.</p>
         </ConfirmDialog>
       )}
 
@@ -567,7 +567,7 @@ function IdeaDetail({
           <div className="rounded-md border border-line px-3 py-2 text-xs">
             {s ? (
               <p>
-                <span className="font-medium">{s.source === "ai" ? `Suggested by Claude (${s.model}${s.cached ? ", cached" : ""})` : "Suggested offline"}</span>
+                <span className="font-medium">{s.source === "ai" ? `Suggested by AI (${s.model}${s.cached ? ", cached" : ""})` : "Suggested offline"}</span>
                 <span className="text-muted">
                   : {s.category} · “{s.title}”{s.tags.length > 0 && ` · ${s.tags.join(", ")}`}
                   {s.reason && ` (${s.reason})`}
@@ -579,10 +579,10 @@ function IdeaDetail({
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
               {differs && <Button className="!py-0.5 text-xs" onClick={() => onUseSuggestion(s!)}>Use suggestion</Button>}
               {ai?.configured && s?.source !== "ai" && (
-                <Button className="!py-0.5 text-xs" onClick={onAskClaude} disabled={aiBusy || ocrBusy || !ideaText(idea)}>{aiBusy ? "Asking Claude…" : "Ask Claude"}</Button>
+                <Button className="!py-0.5 text-xs" onClick={onAskClaude} disabled={aiBusy || ocrBusy || !ideaText(idea)}>{aiBusy ? "Asking the AI…" : "Ask the AI"}</Button>
               )}
-              {aiBusy && s?.source === "ai" && <span className="text-muted">Asking Claude…</span>}
-              {!ai?.configured && <span className="text-muted">Add an API key in Idea settings for Claude's suggestion.</span>}
+              {aiBusy && s?.source === "ai" && <span className="text-muted">Asking the AI…</span>}
+              {!ai?.configured && <span className="text-muted">Add an API key in Idea settings for an AI suggestion.</span>}
             </div>
           </div>
         )}
@@ -668,8 +668,8 @@ function IdeaSettings({
             </div>
           </div>
           <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Claude suggestions</h3>
-            <ApiKeyField ai={ai} onAi={onAi} offlineNote="Without a key, ideas still get an offline keyword suggestion." />
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">AI suggestions</h3>
+            <AiSettingsField ai={ai} onAi={onAi} offlineNote="Without a key, ideas still get an offline keyword suggestion." />
           </div>
         </div>
       )}

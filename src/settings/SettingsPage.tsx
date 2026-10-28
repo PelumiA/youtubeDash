@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, pickFolder, type AiStatus } from "../db/api";
-import ApiKeyField from "../app/ApiKeyField";
+import AiSettingsField, { aiBadgeText, aiDestination } from "../app/AiSettingsField";
 import { SETTINGS, getJson, setJson } from "../app/settings";
 import { SHORTCUTS } from "../app/shortcuts";
 import { Badge, Button, Panel } from "../app/ui";
@@ -152,10 +152,10 @@ export default function SettingsPage({ onRunSetup }: { onRunSetup: () => void })
         </div>
       </Panel>
 
-      <Panel title="Claude" actions={ai && <Badge tone={ai.configured ? "ok" : "muted"}>{ai.configured ? `On (${ai.source === "env" ? "ANTHROPIC_API_KEY" : "keychain"})` : "Off"}</Badge>}>
+      <Panel title="AI (optional)" actions={ai && <Badge tone={ai.configured ? "ok" : "muted"}>{aiBadgeText(ai)}</Badge>}>
         <div className="p-4">
-          <p className="mb-2 text-sm text-muted">Used for the thumbnail hook critique and idea categorization, only when you ask and after you confirm what is sent. Model: {ai?.model}.</p>
-          <ApiKeyField ai={ai} onAi={setAi} offlineNote="Without a key, every other feature works offline." />
+          <p className="mb-2 text-sm text-muted">Used for the thumbnail hook critique and idea categorization, only when you ask and after you confirm what is sent. Now using {aiDestination(ai)}.</p>
+          <AiSettingsField ai={ai} onAi={setAi} offlineNote="Without a key, every other feature works offline." />
         </div>
       </Panel>
 
