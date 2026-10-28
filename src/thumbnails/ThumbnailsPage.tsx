@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, inDesktopApp, pickImages, type AiStatus, type Project, type ThumbnailRow } from "../db/api";
 import { Badge, Button, ConfirmDialog, Panel } from "../app/ui";
 import ApiKeyField from "../app/ApiKeyField";
+import type { Focus } from "../app/App";
+import ProjectSummaryDialog from "../app/ProjectSummaryDialog";
+import { SETTINGS } from "../app/settings";
+import WeightsEditor from "./WeightsEditor";
 import { joinPath } from "../library/paths";
 import CandidateCard, { type CandidateView } from "./CandidateCard";
 import { analyzeBytes, critiqueJpegBase64, decode } from "./browserAnalyze";
@@ -9,11 +13,11 @@ import type { Raster } from "./heuristics";
 import { PLATFORMS, type PlatformId } from "./platforms";
 import { DEFAULT_WEIGHTS, DIMENSIONS, explainWinner, leaders, score, withAi, type Breakdown, type DimensionId, type Weights } from "./score";
 
-const WEIGHTS_KEY = "thumbnails.weights";
 const titleKey = (projectId: number) => `thumbnails.title.${projectId}`;
 const platformKey = (projectId: number) => `thumbnails.platform.${projectId}`;
 
-export default function ThumbnailsPage() {
+export default function ThumbnailsPage({ focus }: { focus?: Focus | null }) {
+  const [summaryFor, setSummaryFor] = useState<number | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -41,8 +45,9 @@ export default function ThumbnailsPage() {
   useEffect(() => {
     (async () => {
       const list = await refreshProjects();
-      if (list.length) setProjectId((id) => id ?? list[0].id);
-      const w = await api.getSetting(WEIGHTS_KEY);
+      const wanted = focus?.projectId != null && list.some((p) => p.id === focus.projectId) ? focus.projectId : null;
+      if (list.length) setProjectId((id) => wanted ?? id ?? list[0].id);
+      const w = await api.getSetting(SETTINGS.weights);
       if (w) setWeights({ ...DEFAULT_WEIGHTS, ...JSON.parse(w) });
       setAi(await api.aiStatus());
     })().catch((e) => setError(String(e)));
@@ -112,9 +117,9 @@ export default function ThumbnailsPage() {
   useEffect(() => {
     if (projectId == null) return;
     (async () => {
-      const [t, p] = await Promise.all([api.getSetting(titleKey(projectId)), api.getSetting(platformKey(projectId))]);
+      const [t, p, d] = await Promise.all([api.getSetting(titleKey(projectId)), api.getSetting(platformKey(projectId)), api.getSetting(SETTINGS.defaultPlatform)]);
       setVideoTitle(t ?? "");
-      const plat = (p as PlatformId) ?? "youtube";
+      const plat = ((p ?? d) as PlatformId | null) ?? "youtube";
       setPlatform(plat);
       await load(projectId, plat);
     })().catch((e) => setError(String(e)));
@@ -153,7 +158,7 @@ export default function ThumbnailsPage() {
 
   async function changeWeights(w: Weights) {
     setWeights(w);
-    await api.setSetting(WEIGHTS_KEY, JSON.stringify(w));
+    await api.setSetting(SETTINGS.weights, JSON.stringify(w));
     for (const c of cands) if (c.breakdown) await persist(c.id, c.breakdown, w);
     refreshProjects();
   }
@@ -231,6 +236,7 @@ export default function ThumbnailsPage() {
           </select>
           <input className="w-44 rounded-md border border-line bg-panel px-2 py-1.5 text-sm" placeholder="New project title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && createProject()} />
           <Button onClick={createProject} disabled={!newTitle.trim()}>Create</Button>
+          {project && <Button variant="ghost" onClick={() => setSummaryFor(project.id)}>Export summary…</Button>}
         </div>
       </div>
 
@@ -336,6 +342,8 @@ export default function ThumbnailsPage() {
         </Panel>
       )}
 
+      {summaryFor != null && <ProjectSummaryDialog projectId={summaryFor} onClose={() => setSummaryFor(null)} />}
+
       <ScoringSettings weights={weights} onWeights={changeWeights} ai={ai} onAi={setAi} />
 
       {consent && (
@@ -353,28 +361,13 @@ export default function ThumbnailsPage() {
 
 function ScoringSettings({ weights, onWeights, ai, onAi }: { weights: Weights; onWeights: (w: Weights) => void; ai: AiStatus | null; onAi: (s: AiStatus) => void }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(weights);
-  useEffect(() => setDraft(weights), [weights]);
-  const total = Object.values(draft).reduce((a, b) => a + b, 0);
-
   return (
     <Panel title={<button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">{open ? "▾" : "▸"} Scoring settings</button>} actions={ai && <Badge tone={ai.configured ? "ok" : "muted"}>{ai.configured ? `AI on (${ai.source === "env" ? "ANTHROPIC_API_KEY" : "keychain"})` : "AI off: heuristics only"}</Badge>}>
       {open && (
         <div className="grid gap-6 px-4 py-4 md:grid-cols-2">
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Weights (points)</h3>
-            {DIMENSIONS.map((d) => (
-              <label key={d.id} className="flex items-center gap-3 py-1 text-sm">
-                <span className="w-36">{d.label}</span>
-                <input type="range" min={0} max={50} value={draft[d.id]} onChange={(e) => setDraft({ ...draft, [d.id]: Number(e.target.value) })} className="flex-1" />
-                <span className="w-8 text-right tabular-nums">{draft[d.id]}</span>
-              </label>
-            ))}
-            <p className="mt-1 text-xs text-muted">Total {total} points. Scores are shown out of 100 over the dimensions that are available.</p>
-            <div className="mt-2 flex gap-2">
-              <Button variant="primary" onClick={() => onWeights(draft)} disabled={JSON.stringify(draft) === JSON.stringify(weights) || total === 0}>Apply weights</Button>
-              <Button variant="ghost" onClick={() => setDraft(DEFAULT_WEIGHTS)}>Defaults (30/25/20/15/10)</Button>
-            </div>
+            <WeightsEditor weights={weights} onWeights={onWeights} />
           </div>
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">AI critique (hook / curiosity)</h3>

@@ -89,6 +89,27 @@ export interface ScaffoldPlan {
   script: string;
 }
 
+export interface SectionHit {
+  id: number;
+  mediaFileId: number;
+  label: string;
+  startS: number;
+  endS: number;
+  filePath: string;
+}
+
+export interface SearchResults {
+  files: MediaFile[];
+  sections: SectionHit[];
+  projects: Project[];
+  ideas: Idea[];
+}
+
+export interface StarterFolder {
+  name: string;
+  status: "missing" | "exists" | "created";
+}
+
 export interface AiStatus {
   configured: boolean;
   source: "env" | "keychain" | null;
@@ -150,6 +171,11 @@ export const api = {
   categorizeIdea: (ideaId: number, taxonomy: string[]) => call<Idea>("categorize_idea", { ideaId, taxonomy }),
   previewScaffold: (request: ScaffoldRequest) => call<ScaffoldPlan>("preview_scaffold", { request }),
   scaffoldIdea: (request: ScaffoldRequest) => call<Project>("scaffold_idea", { request }),
+  searchAll: (query: string) => call<SearchResults>("search_all", { query }),
+  planStarterFolders: (root: string, names: string[]) => call<StarterFolder[]>("plan_starter_folders", { root, names }),
+  createStarterFolders: (root: string, names: string[]) => call<StarterFolder[]>("create_starter_folders", { root, names }),
+  /** Opens the system save dialog; resolves to the saved path, or null if cancelled. */
+  saveProjectSummary: (projectId: number, markdown: string) => call<string | null>("save_project_summary", { projectId, markdown }),
 };
 
 export async function pickImages(defaultPath?: string): Promise<string[]> {

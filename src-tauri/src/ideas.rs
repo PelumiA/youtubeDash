@@ -150,7 +150,7 @@ pub fn capture(conn: &Connection, images_dir: &Path, raw_text: &str, ocr_text: O
 
 /// Ideas matching `query` across text, OCR text, title, category, tags and project folder.
 pub fn list(conn: &Connection, query: &str, status: Option<&str>) -> Result<Vec<Idea>, String> {
-    let like = format!("%{}%", query.trim().replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let like = crate::search::like_pattern(query);
     let mut stmt = conn
         .prepare(&format!(
             "{IDEA_SELECT}

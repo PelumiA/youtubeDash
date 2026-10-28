@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type DashboardSummary, type Project } from "../db/api";
-import type { Route } from "../app/App";
+import type { Navigate } from "../app/App";
+import ProjectSummaryDialog from "../app/ProjectSummaryDialog";
 import { Badge, Button, Panel } from "../app/ui";
 
 function Stat({ label, value }: { label: string; value: number | string }) {
@@ -13,7 +14,8 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 }
 
 /** Home is a launcher, not a fourth feature: counts and shortcuts only. */
-export default function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
+export default function Dashboard({ onNavigate }: { onNavigate: Navigate }) {
+  const [summaryFor, setSummaryFor] = useState<number | null>(null);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +72,8 @@ export default function Dashboard({ onNavigate }: { onNavigate: (r: Route) => vo
                 </span>
                 <span className="flex items-center gap-2">
                   {p.winnerThumbnailId ? <Badge tone="ok">winner picked</Badge> : p.thumbnailCount ? <Badge tone="warn">pick a winner</Badge> : null}
-                  <Button onClick={() => onNavigate("thumbnails")}>Continue</Button>
+                  <Button variant="ghost" onClick={() => setSummaryFor(p.id)} title="Export a Markdown summary">Summary</Button>
+                  <Button onClick={() => onNavigate("thumbnails", { projectId: p.id })}>Continue</Button>
                 </span>
               </li>
             ))}
@@ -96,6 +99,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (r: Route) => vo
           </ul>
         </Panel>
       </div>
+      {summaryFor != null && <ProjectSummaryDialog projectId={summaryFor} onClose={() => setSummaryFor(null)} />}
     </div>
   );
 }

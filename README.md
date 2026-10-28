@@ -15,7 +15,7 @@ explicit confirmation, every change is logged and undoable, and nothing is ever 
 | 1 | Media library organizer | **Built**: scan, naming presets, dry-run diff, apply + undo, tags, duplicates, long-clip sections + chapters. Not yet tried on a real media folder. Transcript (Whisper) segmentation not started |
 | 2 | Thumbnail tester | **Built**: offline heuristic scoring with local OCR, YouTube + Instagram cover overlays, previews, comparison, winner, adjustable weights/overrides, opt-in Claude critique. Not yet tried with your own thumbnails or a live API key |
 | 3 | Idea organizer | **Built**: text / screenshot / paste / drop capture, local OCR, offline + opt-in Claude categorization, confirm-then-scaffold project folders, inbox + search. Not yet tried with a live API key |
-| 4 | Polish (settings, search, onboarding) | Not started |
+| 4 | Polish | **Built**: first-run setup, Settings page, custom naming presets, global search (Ctrl+K), keyboard shortcuts, project summary export |
 
 ## Requirements
 
@@ -47,7 +47,9 @@ cd src-tauri && cargo test            # scan, apply/undo byte-identical restore,
 
 ```
 src/
-  app/        shell, navigation, shared UI
+  app/        shell, navigation, shared UI, search palette, shortcuts, first-run setup,
+              settings keys, project summary (projectSummary.ts)
+  settings/   Settings page
   dashboard/  home launcher
   library/    Module 1 UI + pure rename engine (renameEngine.ts)
   thumbnails/ Module 2: heuristics.ts (pure scoring), ocr.ts (local Tesseract), score.ts (weights,
@@ -62,6 +64,8 @@ src-tauri/src/
   tools.rs    locates ffmpeg/ffprobe
   thumbs.rs   projects, thumbnail candidates (referenced in place), settings
   ideas.rs    idea inbox, search, project folder scaffolding (create-only)
+  search.rs   global search across files, clip sections, projects and ideas
+  setup.rs    first-run starter folders (create-only)
   ai.rs       Claude calls (thumbnail critique, idea categorization): raw HTTP, key from env or
               OS keychain, cached
   db.rs       SQLite schema and queries
@@ -163,3 +167,22 @@ come from a preset (Default, or Groovy Gains with its brief CTA footer) and are 
 Idea settings. Ideas are archived, never deleted.
 
 To regenerate the test screenshot, run `node scripts/make-idea-fixtures.mjs`.
+
+## Everyday use
+
+- **First run** asks for a preset pack (Default or Groovy Gains: naming preset, idea
+  categories, brief footer), your media folder (optionally creating the pack's starter folders;
+  only missing ones are made), a Projects folder, the default thumbnail platform and, optionally,
+  an API key. Every step can be skipped; run it again from Settings.
+- **Settings** holds everything in one place: media folder, default naming preset and your own
+  presets (validated: `{version}` is required so clashes bump instead of overwriting; no path
+  characters), default platform and scoring weights, Projects folder and categories, the API key.
+- **Search** (`Ctrl+K`, or Search… in the sidebar) finds indexed files (by name, folder or tag),
+  clip sections, projects and ideas, and opens the exact item: a file is highlighted in the
+  library, a section opens its clip, a project opens in the thumbnail tester.
+- **Shortcuts:** `Ctrl+1`–`4` switch modules, `Ctrl+,` opens Settings, `Ctrl+Shift+N` captures an
+  idea, `/` searches ideas, `?` lists them all, `Esc` closes dialogs (`⌘` on macOS).
+- **Project summary** (Home, thumbnail tester, or a converted idea): a Markdown page with the
+  project, its idea, the thumbnail scores per dimension, the winner and why it leads, and the AI
+  critique if one was run. Copy it, or save it where you choose (the system dialog asks before
+  replacing a file).

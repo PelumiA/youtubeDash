@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useEffect, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
@@ -59,6 +59,11 @@ export function ConfirmDialog({
   onCancel: () => void;
   busy?: boolean;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onCancel();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="w-full max-w-lg rounded-lg border border-line bg-panel shadow-xl">

@@ -198,3 +198,44 @@ export function planRenames(
 
   return result;
 }
+
+// ---- Custom naming presets (edited under Settings) ----
+
+const TOKENS = ["{date}", "{slug}", "{type}", "{version}"];
+
+/** Problems with a custom preset, or [] when it can be used. */
+export function validatePreset(p: NamingPreset): string[] {
+  const problems: string[] = [];
+  if (!p.label.trim()) problems.push("Give the preset a name.");
+  if (!p.pattern.includes("{version}")) problems.push("The pattern must include {version}, so clashes get a new version instead of overwriting.");
+  const unknown = (p.pattern.match(/\{[^}]*\}/g) ?? []).filter((t) => !TOKENS.includes(t));
+  if (unknown.length) problems.push(`Unknown token${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")}. Use ${TOKENS.join(" ")}.`);
+  if (/[\\/:*?"<>|]/.test(p.pattern.replace(/\{[^}]*\}/g, ""))) problems.push('The pattern can\'t contain \\ / : * ? " < > |');
+  if (!p.types.length) problems.push("Add at least one content type.");
+  for (const folder of Object.values(p.folders)) {
+    if (!folder || /[\\/:*?"<>|]/.test(folder) || folder === "." || folder === "..") problems.push(`"${folder}" isn't a valid folder name.`);
+  }
+  return problems;
+}
+
+/** "reel: Reels" lines → types and their sort folders (a type without a folder sorts into its own name). */
+export function parseTypeLines(text: string): { types: string[]; folders: Record<string, string> } {
+  const types: string[] = [];
+  const folders: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const [rawType, ...rest] = line.split(":");
+    const type = slugify(rawType ?? "");
+    if (!type || types.includes(type)) continue;
+    types.push(type);
+    folders[type] = rest.join(":").trim() || type;
+  }
+  return { types, folders };
+}
+
+export function typeLines(p: NamingPreset): string {
+  return p.types.map((t) => `${t}: ${p.folders[t] ?? t}`).join("\n");
+}
+
+export function allPresets(custom: NamingPreset[]): NamingPreset[] {
+  return [...PRESETS, ...custom.filter((c) => !PRESETS.some((p) => p.id === c.id))];
+}

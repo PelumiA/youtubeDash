@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, pickFolder } from "../db/api";
 import { Badge, Button, ConfirmDialog, Panel, formatBytes, formatDuration } from "../app/ui";
-import { MAX_FILES_PER_RUN, PRESETS, guessType, planRenames, slugify, type PlannedOp, type PlanInput } from "./renameEngine";
-import { basename, joinPath } from "./paths";
+import { MAX_FILES_PER_RUN, PRESETS, allPresets, guessType, planRenames, slugify, type PlannedOp, type PlanInput } from "./renameEngine";
+import { basename, dirname, isUnder, joinPath } from "./paths";
 import { TAG_PALETTE, tagColor } from "./tags";
 import ClipEditor from "./ClipEditor";
 import type { BatchSummary, MediaFile, ScanResult } from "./types";
+import type { Focus } from "../app/App";
+import { SETTINGS, getJson } from "../app/settings";
+import type { NamingPreset } from "./renameEngine";
 
 type Tab = "inventory" | "duplicates" | "history";
 
-export default function LibraryPage() {
+export default function LibraryPage({ focus }: { focus?: Focus | null }) {
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,8 +31,11 @@ export default function LibraryPage() {
   const [busy, setBusy] = useState(false);
   const [clip, setClip] = useState<MediaFile | null>(null);
   const [sectionCounts, setSectionCounts] = useState<Record<string, number>>({});
+  const [presets, setPresets] = useState<NamingPreset[]>(PRESETS);
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const highlightRow = useRef<HTMLTableRowElement | null>(null);
 
-  const preset = PRESETS.find((p) => p.id === presetId)!;
+  const preset = presets.find((p) => p.id === presetId) ?? presets[0];
   const files = scan?.files ?? [];
   const typeOf = useCallback((f: MediaFile) => typeOverrides[f.id] ?? guessType(f, preset), [typeOverrides, preset]);
 
@@ -40,7 +46,36 @@ export default function LibraryPage() {
     if (scan && !clip) api.sectionCounts(scan.root).then(setSectionCounts, () => setSectionCounts({}));
   }, [scan, clip]);
 
-  async function runScan(root: string, keepSelection = false) {
+  // Saved defaults: naming preset (incl. custom ones) and the media folder, which is rescanned
+  // on open (scanning is read-only). A search result's file wins over the saved folder.
+  useEffect(() => {
+    (async () => {
+      const [custom, defaultPreset, savedRoot] = await Promise.all([
+        getJson<NamingPreset[]>(SETTINGS.customPresets, []),
+        api.getSetting(SETTINGS.libraryPreset),
+        api.getSetting(SETTINGS.libraryRoot),
+      ]);
+      const list = allPresets(custom);
+      setPresets(list);
+      if (defaultPreset && list.some((p) => p.id === defaultPreset)) setPresetId(defaultPreset);
+      if (focus?.filePath) {
+        const root = savedRoot && isUnder(focus.filePath, savedRoot) ? savedRoot : dirname(focus.filePath);
+        const result = await runScan(root);
+        const file = result?.files.find((f) => f.id === focus.fileId || f.path === focus.filePath);
+        if (file) {
+          setHighlight(file.id);
+          if (focus.sectionId != null) setClip(file);
+        } else setError(`${basename(focus.filePath)} is no longer in ${root}. It may have been moved or archived.`);
+      } else if (savedRoot && !scan) await runScan(savedRoot);
+    })().catch((e) => setError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
+
+  useEffect(() => {
+    if (highlight != null) highlightRow.current?.scrollIntoView({ block: "center" });
+  }, [highlight, scan]);
+
+  async function runScan(root: string, keepSelection = false): Promise<ScanResult | null> {
     setScanning(true);
     setError(null);
     try {
@@ -51,8 +86,10 @@ export default function LibraryPage() {
         setTypeOverrides({});
         setSlug((s) => s || slugify(basename(result.root)));
       }
+      return result;
     } catch (e) {
       setError(String(e));
+      return null;
     } finally {
       setScanning(false);
     }
@@ -183,7 +220,7 @@ export default function LibraryPage() {
           <label className="text-xs text-muted">
             Preset
             <select className="mt-1 block rounded-md border border-line bg-panel px-2 py-1.5 text-sm text-ink" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
-              {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              {presets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
           </label>
           <label className="text-xs text-muted">
@@ -276,7 +313,7 @@ export default function LibraryPage() {
               </thead>
               <tbody className="divide-y divide-line">
                 {files.map((f) => (
-                  <tr key={f.id} className="hover:bg-sunken/50">
+                  <tr key={f.id} ref={f.id === highlight ? highlightRow : undefined} className={f.id === highlight ? "bg-accent/15" : "hover:bg-sunken/50"}>
                     <td className="px-3 py-1.5">
                       <input
                         type="checkbox"

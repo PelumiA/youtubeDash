@@ -3,7 +3,9 @@ mod db;
 mod fsops;
 mod ideas;
 mod scan;
+mod search;
 mod sections;
+mod setup;
 mod thumbs;
 mod tools;
 
@@ -431,6 +433,41 @@ fn scaffold_idea(state: State<'_, AppState>, request: ideas::ScaffoldRequest) ->
 }
 
 #[tauri::command]
+fn search_all(state: State<'_, AppState>, query: String) -> CmdResult<search::SearchResults> {
+    let conn = state.db.lock().map_err(err)?;
+    search::search(&conn, &query)
+}
+
+#[tauri::command]
+fn plan_starter_folders(root: String, names: Vec<String>) -> CmdResult<Vec<setup::StarterFolder>> {
+    setup::plan(Path::new(&normalize_root(&root)), &names)
+}
+
+#[tauri::command]
+fn create_starter_folders(root: String, names: Vec<String>) -> CmdResult<Vec<setup::StarterFolder>> {
+    setup::create(Path::new(&normalize_root(&root)), &names)
+}
+
+/// Saves a project summary where the user chooses in the system save dialog (which asks
+/// before replacing a file). The webview supplies the text, never the path.
+#[tauri::command]
+async fn save_project_summary(app: AppHandle, state: State<'_, AppState>, project_id: i64, markdown: String) -> CmdResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let project = {
+        let conn = state.db.lock().map_err(err)?;
+        thumbs::get_project(&conn, project_id).map_err(err)?.ok_or("Project not found.")?
+    };
+    let mut dialog = app.dialog().file().set_title("Save project summary").set_file_name(format!("{}-summary.md", project.slug)).add_filter("Markdown", &["md"]);
+    if let Some(dir) = project.folder_path.as_deref().filter(|d| Path::new(d).is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    let Some(picked) = dialog.blocking_save_file() else { return Ok(None) };
+    let path = picked.into_path().map_err(err)?;
+    std::fs::write(&path, markdown).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 fn dashboard_summary(state: State<'_, AppState>) -> CmdResult<db::DashboardSummary> {
     let conn = state.db.lock().map_err(err)?;
     db::dashboard_summary(&conn).map_err(err)
@@ -490,6 +527,10 @@ pub fn run() {
             categorize_idea,
             preview_scaffold,
             scaffold_idea,
+            search_all,
+            plan_starter_folders,
+            create_starter_folders,
+            save_project_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import { api, pickFolder, type AiStatus, type Idea, type IdeaPatch, type IdeaStatus, type ScaffoldPlan, type ScaffoldRequest } from "../db/api";
 import { Badge, Button, ConfirmDialog, Panel } from "../app/ui";
 import ApiKeyField from "../app/ApiKeyField";
+import type { Focus, Navigate } from "../app/App";
+import ProjectSummaryDialog from "../app/ProjectSummaryDialog";
+import { SETTINGS } from "../app/settings";
+import { isTyping } from "../app/shortcuts";
+import TaxonomyEditor from "./TaxonomyEditor";
 import { bytesToBase64 } from "../app/base64";
 import { decode, ocrPaths, toCanvas } from "../thumbnails/browserAnalyze";
 import { ocrWorker } from "../thumbnails/ocr";
 import { readText } from "./ocrImage";
-import { DEFAULT_TAXONOMY, TAXONOMY_PRESETS, localDate, parseCategories, parseTags, suggestLocally, titleFromText, type Suggestion, type Taxonomy } from "./taxonomy";
+import { DEFAULT_TAXONOMY, localDate, parseTags, suggestLocally, titleFromText, type Suggestion, type Taxonomy } from "./taxonomy";
 
-const TAXONOMY_KEY = "ideas.taxonomy";
-const PROJECTS_DIR_KEY = "ideas.projectsDir";
 
 type Tab = IdeaStatus | "all";
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -26,7 +29,8 @@ async function readImageText(bytes: ArrayBuffer): Promise<string> {
 const ideaText = (i: Idea) => [i.rawText, i.ocrText].map((s) => s?.trim()).filter(Boolean).join("\n\n");
 const headline = (i: Idea) => i.title || (ideaText(i) ? titleFromText(ideaText(i)) : i.hasImage ? "Screenshot" : "Untitled idea");
 
-export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () => void }) {
+export default function IdeasPage({ focus, onNavigate }: { focus?: Focus | null; onNavigate?: Navigate }) {
+  const openThumbnails = onNavigate && ((projectId?: number | null) => onNavigate("thumbnails", projectId != null ? { projectId } : undefined));
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Tab>("inbox");
@@ -40,7 +44,10 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
   const [ocrBusy, setOcrBusy] = useState<Set<number>>(new Set());
   const [aiBusy, setAiBusy] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; projectId: number } | null>(null);
+  const [summaryFor, setSummaryFor] = useState<number | null>(null);
+  const captureBox = useRef<HTMLTextAreaElement>(null);
+  const searchBox = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<{ req: ScaffoldRequest; plan: ScaffoldPlan } | null>(null);
   const [creating, setCreating] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -65,9 +72,9 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
 
   useEffect(() => {
     (async () => {
-      const t = await api.getSetting(TAXONOMY_KEY);
+      const t = await api.getSetting(SETTINGS.taxonomy);
       if (t) setTaxonomy({ ...DEFAULT_TAXONOMY, ...JSON.parse(t) });
-      setProjectsDir(await api.getSetting(PROJECTS_DIR_KEY));
+      setProjectsDir(await api.getSetting(SETTINGS.projectsDir));
       setAi(await api.aiStatus());
     })().catch((e) => setError(String(e)));
   }, []);
@@ -161,6 +168,26 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
     }
   }
 
+  // Deep links: a search result selects its idea; "new idea" puts the cursor in the capture box.
+  useEffect(() => {
+    if (focus?.ideaId != null) {
+      setTab("all");
+      setSelectedId(focus.ideaId);
+    }
+    if (focus?.capture) captureBox.current?.focus();
+  }, [focus]);
+
+  // "/" jumps to the idea search (when not already typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+      e.preventDefault();
+      searchBox.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Ctrl+V a screenshot anywhere on the page.
   const captureRef = useRef(captureImage);
   captureRef.current = captureImage;
@@ -204,7 +231,7 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
   async function chooseProjectsDir(): Promise<string | null> {
     const dir = await pickFolder("Choose (or create) your Projects folder", "C:\\Demo\\Projects");
     if (dir) {
-      await api.setSetting(PROJECTS_DIR_KEY, dir);
+      await api.setSetting(SETTINGS.projectsDir, dir);
       setProjectsDir(dir);
     }
     return dir;
@@ -235,7 +262,7 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
     setCreating(true);
     try {
       const project = await api.scaffoldIdea(pending.req);
-      setNotice(`Created ${project.folderPath}. The idea is ready to brief, and the project is waiting in the thumbnail tester.`);
+      setNotice({ text: `Created ${project.folderPath}. The idea is ready to brief, and the project is waiting in the thumbnail tester.`, projectId: project.id });
       setPending(null);
       await refresh(query);
     } catch (e) {
@@ -247,7 +274,7 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
   }
 
   async function saveTaxonomy(t: Taxonomy) {
-    await api.setSetting(TAXONOMY_KEY, JSON.stringify(t));
+    await api.setSetting(SETTINGS.taxonomy, JSON.stringify(t));
     setTaxonomy(t);
   }
 
@@ -275,9 +302,9 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
       )}
       {notice && (
         <div className="flex items-start justify-between gap-3 rounded-md bg-ok/10 px-3 py-2 text-sm text-ok">
-          <span>{notice}</span>
+          <span>{notice.text}</span>
           <span className="flex shrink-0 gap-2">
-            {onOpenThumbnails && <Button className="!py-0.5 text-xs" onClick={onOpenThumbnails}>Thumbnail tester →</Button>}
+            {openThumbnails && <Button className="!py-0.5 text-xs" onClick={() => openThumbnails(notice.projectId)}>Thumbnail tester →</Button>}
             <button onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
           </span>
         </div>
@@ -294,6 +321,7 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) captureText();
             }}
             aria-label="New idea"
+            ref={captureBox}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" onClick={captureText} disabled={!draft.trim()}>Add to inbox</Button>
@@ -337,6 +365,7 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="Search ideas"
+              ref={searchBox}
             />
           </div>
           {visible.length === 0 && (
@@ -383,7 +412,8 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
             onAskClaude={() => askClaude(selected.id)}
             onCreate={() => startCreate(selected)}
             onStatus={(s) => setStatus(selected, s)}
-            onOpenThumbnails={onOpenThumbnails}
+            onOpenThumbnails={openThumbnails && (() => openThumbnails(selected.projectId))}
+            onSummary={() => setSummaryFor(selected.projectId)}
           />
         ) : (
           <Panel title="Review">
@@ -399,6 +429,8 @@ export default function IdeasPage({ onOpenThumbnails }: { onOpenThumbnails?: () 
           <div className="rounded-lg border-2 border-dashed border-accent bg-panel px-8 py-6 text-sm font-medium">Drop screenshots to add them to the inbox</div>
         </div>
       )}
+
+      {summaryFor != null && <ProjectSummaryDialog projectId={summaryFor} onClose={() => setSummaryFor(null)} />}
 
       {consentFor != null && (
         <ConfirmDialog title="Ask Claude to categorize?" confirmLabel="Send" onConfirm={() => runClaude(consentFor)} onCancel={() => setConsentFor(null)}>
@@ -447,6 +479,7 @@ function IdeaDetail({
   onCreate,
   onStatus,
   onOpenThumbnails,
+  onSummary,
 }: {
   idea: Idea;
   categories: string[];
@@ -459,6 +492,7 @@ function IdeaDetail({
   onCreate: () => void;
   onStatus: (s: "inbox" | "archived") => void;
   onOpenThumbnails?: () => void;
+  onSummary: () => void;
 }) {
   const [title, setTitle] = useState(idea.title ?? "");
   const [tags, setTags] = useState(idea.tags.join(", "));
@@ -500,7 +534,10 @@ function IdeaDetail({
             <p className="font-medium text-ok">Ready to brief</p>
             <p className="break-all font-mono text-xs">{idea.projectFolder}</p>
             <p className="mt-1 text-xs text-muted">brief.md was written when the project was created; edit it there.</p>
-            {onOpenThumbnails && <Button className="mt-2 !py-1 text-xs" onClick={onOpenThumbnails}>Test thumbnails for it →</Button>}
+            <span className="mt-2 flex gap-2">
+              {onOpenThumbnails && <Button className="!py-1 text-xs" onClick={onOpenThumbnails}>Test thumbnails for it →</Button>}
+              <Button variant="ghost" className="!py-1 text-xs" onClick={onSummary}>Export summary…</Button>
+            </span>
           </div>
         )}
 
@@ -609,26 +646,6 @@ function IdeaSettings({
   onAi: (s: AiStatus) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [categories, setCategories] = useState(taxonomy.categories.join(", "));
-  const [footer, setFooter] = useState(taxonomy.footer);
-  const [presetId, setPresetId] = useState(taxonomy.presetId);
-  useEffect(() => {
-    setCategories(taxonomy.categories.join(", "));
-    setFooter(taxonomy.footer);
-    setPresetId(taxonomy.presetId);
-  }, [taxonomy]);
-  const parsed = parseCategories(categories);
-  const dirty = parsed.join() !== taxonomy.categories.join() || footer !== taxonomy.footer || presetId !== taxonomy.presetId;
-
-  function loadPreset(id: string) {
-    const p = TAXONOMY_PRESETS.find((x) => x.presetId === id);
-    setPresetId(id);
-    if (p) {
-      setCategories(p.categories.join(", "));
-      setFooter(p.footer);
-    }
-  }
-
   return (
     <Panel
       title={<button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">{open ? "▾" : "▸"} Idea settings</button>}
@@ -647,16 +664,7 @@ function IdeaSettings({
             </div>
             <div>
               <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Categories</h3>
-              <select className="mb-2 rounded-md border border-line bg-panel px-2 py-1 text-sm" value={presetId} onChange={(e) => loadPreset(e.target.value)} aria-label="Category preset">
-                {TAXONOMY_PRESETS.map((p) => <option key={p.presetId} value={p.presetId}>{p.label}</option>)}
-                {!TAXONOMY_PRESETS.some((p) => p.presetId === presetId) && <option value={presetId}>Custom</option>}
-              </select>
-              <textarea className="h-16 w-full rounded-md border border-line bg-panel px-2.5 py-1.5 text-sm" value={categories} onChange={(e) => { setCategories(e.target.value); setPresetId("custom"); }} aria-label="Categories" />
-              <label className="mt-2 block text-xs font-medium text-muted">
-                Brief footer (added to every brief.md)
-                <input className="mt-1 w-full rounded-md border border-line bg-panel px-2.5 py-1.5 text-sm" value={footer} onChange={(e) => setFooter(e.target.value)} />
-              </label>
-              <Button variant="primary" className="mt-2" disabled={!dirty || parsed.length === 0} onClick={() => onTaxonomy({ presetId, categories: parsed, footer })}>Save categories</Button>
+              <TaxonomyEditor taxonomy={taxonomy} onTaxonomy={onTaxonomy} />
             </div>
           </div>
           <div>

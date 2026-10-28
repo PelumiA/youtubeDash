@@ -6,8 +6,8 @@ export function separatorOf(path: string): "\\" | "/" {
 
 export function joinPath(dir: string, ...parts: string[]): string {
   const sep = separatorOf(dir);
-  const trimmed = dir.replace(/[\/]+$/, "");
-  return [trimmed, ...parts.map((p) => p.replace(/^[\/]+|[\/]+$/g, ""))].join(sep);
+  const trimmed = dir.replace(/[\\/]+$/, "");
+  return [trimmed, ...parts.map((p) => p.replace(/^[\\/]+|[\\/]+$/g, ""))].join(sep);
 }
 
 export function dirname(path: string): string {
@@ -22,5 +22,11 @@ export function basename(path: string): string {
 
 /** Key for collision checks: Windows and default macOS volumes are case-insensitive. */
 export function pathKey(path: string): string {
-  return path.replace(/[\/]+/g, "/").replace(/\/$/, "").toLowerCase();
+  return path.replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
+}
+
+/** True when `path` is `root` or inside it (case-insensitive, either separator). */
+export function isUnder(path: string, root: string): boolean {
+  const p = pathKey(path), r = pathKey(root);
+  return p === r || p.startsWith(`${r}/`);
 }

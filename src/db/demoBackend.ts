@@ -92,6 +92,7 @@ const ideas: Idea[] = [
 /** Idea images: the seeded screenshot is a fixture URL, captured ones are kept in memory. */
 const ideaImages = new Map<number, string | ArrayBuffer>([[2, ideaShotUrl]]);
 const usedFolders = new Set<string>();
+const demoFolders = new Set<string>();
 
 const slugify = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled";
 
@@ -340,6 +341,32 @@ const handlers: Record<string, (args: any) => unknown> = {
     projects.unshift(p);
     Object.assign(i!, { status: "project", projectId: p.id, title: p.title, category: request.category, tags: request.tags });
     return projectView(p);
+  },
+  search_all: ({ query }: { query: string }) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return { files: [], sections: [], projects: [], ideas: [] };
+    const has = (...parts: Array<string | null | undefined>) => parts.join(" ").toLowerCase().includes(q);
+    return {
+      files: visible().filter((f) => has(f.path, f.tags.join(" "))).slice(0, 8),
+      sections: sections
+        .filter((s) => has(s.label, s.tags.join(" "), s.notes))
+        .slice(0, 8)
+        .map((s) => ({ id: s.id!, mediaFileId: s.mediaFileId, label: s.label, startS: s.startS, endS: s.endS, filePath: files.find((f) => f.id === s.mediaFileId)!.path })),
+      projects: projects.filter((p) => has(p.title, p.category, p.folderPath)).map(projectView).slice(0, 8),
+      ideas: (handlers.list_ideas({ query, status: null }) as Idea[]).slice(0, 8),
+    };
+  },
+  plan_starter_folders: ({ root, names }: { root: string; names: string[] }) =>
+    names.map((name) => ({ name, status: demoFolders.has(pathKey(joinPath(root, name))) || files.some((f) => pathKey(f.dir) === pathKey(joinPath(root, name))) ? "exists" : "missing" })),
+  create_starter_folders: ({ root, names }: { root: string; names: string[] }) =>
+    (handlers.plan_starter_folders({ root, names }) as Array<{ name: string; status: string }>).map((f) => {
+      if (f.status === "exists") return f;
+      demoFolders.add(pathKey(joinPath(root, f.name)));
+      return { ...f, status: "created" };
+    }),
+  save_project_summary: ({ projectId }: { projectId: number }) => {
+    const p = projects.find((x) => x.id === projectId)!;
+    return joinPath(p.folderPath ?? "C:\\Demo\\Documents", `${p.slug}-summary.md`);
   },
   dashboard_summary: () => ({
     filesIndexed: visible().length,

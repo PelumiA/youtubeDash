@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PRESETS, conformsTo, guessType, planRenames, slugify, type PlanInput } from "./renameEngine";
+import { PRESETS, allPresets, conformsTo, guessType, parseTypeLines, planRenames, slugify, typeLines, validatePreset, type PlanInput } from "./renameEngine";
 import { basename, dirname, pathKey } from "./paths";
 import type { MediaFile } from "./types";
 
@@ -161,5 +161,33 @@ describe("guessType", () => {
   it("respects the preset's type list", () => {
     expect(guessType(file("/a.jpg", { kind: "photo", width: 1080, height: 1350 }), groovy)).toBe("carousel");
     expect(guessType(file("/a.wav", { kind: "audio" }), groovy)).toBe("broll");
+  });
+});
+
+describe("custom naming presets", () => {
+  const base = { id: "custom-x", label: "Mine", pattern: "{date}-{slug}-{type}-v{version}", types: ["reel"], folders: { reel: "Reels" } };
+
+  it("accepts a valid preset and rejects unsafe or unbumpable ones", () => {
+    expect(validatePreset(base)).toEqual([]);
+    expect(validatePreset({ ...base, pattern: "{date}_{slug}" }).join()).toMatch(/\{version\}/);
+    expect(validatePreset({ ...base, pattern: "{date}/{slug}_v{version}" }).join()).toMatch(/can't contain/);
+    expect(validatePreset({ ...base, pattern: "{date}\\{slug}_v{version}" }).join()).toMatch(/can't contain/);
+    expect(validatePreset({ ...base, folders: { reel: "Reels\\Sub" } }).join()).toMatch(/valid folder/);
+    expect(validatePreset({ ...base, pattern: "{when}_v{version}" }).join()).toMatch(/Unknown token \{when\}/);
+    expect(validatePreset({ ...base, folders: { reel: "../up" } }).join()).toMatch(/valid folder/);
+    expect(validatePreset({ ...base, label: " ", types: [] })).toHaveLength(2);
+  });
+
+  it("round-trips type lines", () => {
+    const parsed = parseTypeLines("Reel: Reels\ntalking head\n\nreel: dup\ncarousel: Carousels/Slides");
+    expect(parsed.types).toEqual(["reel", "talking-head", "carousel"]);
+    expect(parsed.folders).toEqual({ reel: "Reels", "talking-head": "talking-head", carousel: "Carousels/Slides" });
+    expect(validatePreset({ ...base, ...parsed }).join()).toMatch(/Carousels\/Slides/);
+    expect(typeLines({ ...base, types: ["reel", "broll"], folders: { reel: "Reels" } })).toBe("reel: Reels\nbroll: broll");
+  });
+
+  it("lists built-ins first and ignores custom presets that shadow them", () => {
+    const ids = allPresets([base, { ...base, id: "default" }]).map((p) => p.id);
+    expect(ids).toEqual(["default", "groovy-gains", "custom-x"]);
   });
 });

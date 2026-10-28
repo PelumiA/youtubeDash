@@ -226,6 +226,16 @@ pub fn get_media(conn: &Connection, ids: &[i64]) -> rusqlite::Result<Vec<MediaRo
     Ok(out)
 }
 
+/// Media whose name, path or tags match a LIKE pattern (see `search::like_pattern`).
+pub fn search_media(conn: &Connection, like: &str, limit: usize) -> rusqlite::Result<Vec<MediaRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {MEDIA_COLUMNS} FROM media_files WHERE (path || ' ' || tags) LIKE ?1 ESCAPE '\\'
+         ORDER BY (filename LIKE ?1 ESCAPE '\\') DESC, path LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(params![like, limit as i64], media_row)?;
+    rows.collect()
+}
+
 pub fn set_tags(conn: &Connection, file_id: i64, tags: &[String]) -> rusqlite::Result<()> {
     let json = serde_json::to_string(tags).expect("tags serialize");
     conn.execute("UPDATE media_files SET tags = ?1 WHERE id = ?2", params![json, file_id])?;
