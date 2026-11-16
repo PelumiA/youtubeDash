@@ -154,7 +154,8 @@ pub fn set_exported(conn: &Connection, id: i64, path: Option<&str>) -> rusqlite:
 // ---------- detection ----------
 
 fn ffmpeg() -> Result<&'static Path, String> {
-    tools::ffmpeg().ok_or_else(|| "ffmpeg was not found. Install it (e.g. `winget install Gyan.FFmpeg`) and restart the app.".into())
+    let hint = if cfg!(windows) { "winget install Gyan.FFmpeg" } else if cfg!(target_os = "macos") { "brew install ffmpeg" } else { "your package manager" };
+    tools::ffmpeg().ok_or_else(|| format!("ffmpeg was not found. Install it ({hint}) and restart the app."))
 }
 
 fn ffprobe() -> Result<&'static Path, String> {

@@ -13,6 +13,7 @@ export const SETTINGS = {
   taxonomy: "ideas.taxonomy",
   projectsDir: "ideas.projectsDir",
   onboardingDone: "onboarding.done",
+  tourDone: "tour.done",
 } as const;
 
 export async function getJson<T>(key: string, fallback: T): Promise<T> {
