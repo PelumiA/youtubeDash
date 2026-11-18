@@ -12,7 +12,7 @@ import { DEFAULT_WEIGHTS, type Weights } from "../thumbnails/score";
 import WeightsEditor from "../thumbnails/WeightsEditor";
 
 /** Every saved preference in one place. Each section saves on its own button; nothing touches files. */
-export default function SettingsPage({ onRunSetup }: { onRunSetup: () => void }) {
+export default function SettingsPage({ onRunSetup, onTour }: { onRunSetup: () => void; onTour: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [libraryRoot, setLibraryRoot] = useState<string | null>(null);
   const [presetId, setPresetId] = useState(PRESETS[0].id);
@@ -68,6 +68,7 @@ export default function SettingsPage({ onRunSetup }: { onRunSetup: () => void })
         <h1 className="text-xl font-semibold">Settings</h1>
         <span className="flex items-center gap-3">
           {saved && <span className="text-xs text-ok">Saved: {saved}</span>}
+          <Button onClick={onTour}>Take the tour</Button>
           <Button onClick={onRunSetup}>Run first-run setup again</Button>
         </span>
       </div>

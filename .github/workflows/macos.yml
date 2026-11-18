@@ -1,0 +1,59 @@
+# Builds the macOS app on GitHub's Mac runners (Tauri can't build a Mac app from Windows).
+# Apple Silicon and Intel are separate builds. Download the .dmg from the run's Artifacts.
+# The app is ad-hoc signed, not notarized: on first open, approve it under
+# System Settings > Privacy & Security.
+name: macOS build
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            label: apple-silicon
+          - target: x86_64-apple-darwin
+            label: intel
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.target }}
+
+      - run: npm ci
+
+      # Run the test suites once, natively on the Apple Silicon runner. ffmpeg lets the
+      # long-clip test exercise the Homebrew lookup instead of skipping.
+      - name: Tests
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          brew install ffmpeg
+          npm test
+          (cd src-tauri && cargo test)
+
+      - name: Build app
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles app,dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: creator-dashboard-macos-${{ matrix.label }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error

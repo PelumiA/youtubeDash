@@ -7,6 +7,7 @@ import IdeasPage from "../ideas/IdeasPage";
 import SettingsPage from "../settings/SettingsPage";
 import CommandPalette from "./CommandPalette";
 import Onboarding from "./Onboarding";
+import Tour from "./Tour";
 import { SETTINGS } from "./settings";
 import { MOD, SHORTCUTS, actionFor, isTyping } from "./shortcuts";
 import { Button } from "./ui";
@@ -38,6 +39,7 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
   const [onboarding, setOnboarding] = useState(false);
+  const [tour, setTour] = useState(false);
 
   // `n` remounts the page, so navigating to the page you're on still applies the focus and
   // reloads settings changed elsewhere.
@@ -50,7 +52,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (onboarding) return;
+      if (onboarding || tour) return;
       const action = actionFor({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey, typing: isTyping(e.target) });
       if (!action) {
         if (e.key === "Escape") setHelp(false);
@@ -64,10 +66,22 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [navigate, onboarding]);
+  }, [navigate, onboarding, tour]);
+
+  const startTour = useCallback(() => {
+    setPalette(false);
+    setHelp(false);
+    setTour(true);
+  }, []);
+
+  const endTour = useCallback(() => {
+    setTour(false);
+    api.setSetting(SETTINGS.tourDone, "1").catch(() => {});
+  }, []);
 
   const navButton = (id: Route, label: string, hint?: string) => (
     <button
+      data-tour={`nav-${id}`}
       onClick={() => navigate(id)}
       className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm ${
         route === id ? "bg-sunken font-medium text-ink" : "text-muted hover:bg-sunken hover:text-ink"
@@ -86,7 +100,7 @@ export default function App() {
           <div className="text-xs text-muted">Local-first · nothing leaves this machine</div>
         </div>
         <div className="px-2 pb-2">
-          <button onClick={() => setPalette(true)} className="flex w-full items-center justify-between rounded-md border border-line px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken hover:text-ink">
+          <button data-tour="search" onClick={() => setPalette(true)} className="flex w-full items-center justify-between rounded-md border border-line px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken hover:text-ink">
             Search… <span className="text-[10px]">{MOD}+K</span>
           </button>
         </div>
@@ -95,7 +109,8 @@ export default function App() {
         </ul>
         <div className="space-y-0.5 px-2 pb-2">
           {navButton("settings", "Settings", `${MOD}+,`)}
-          <button onClick={() => setHelp(true)} className="w-full rounded-md px-3 py-1.5 text-left text-xs text-muted hover:bg-sunken hover:text-ink">Keyboard shortcuts (?)</button>
+          <button data-tour="shortcuts" onClick={() => setHelp(true)} className="w-full rounded-md px-3 py-1.5 text-left text-xs text-muted hover:bg-sunken hover:text-ink">Keyboard shortcuts (?)</button>
+          <button onClick={startTour} className="w-full rounded-md px-3 py-1.5 text-left text-xs text-muted hover:bg-sunken hover:text-ink">Take the tour</button>
         </div>
         {!inDesktopApp && (
           <div className="m-3 mt-0 rounded-md bg-warn/15 p-2.5 text-xs text-warn">
@@ -108,19 +123,22 @@ export default function App() {
         {route === "library" && <LibraryPage focus={focus} />}
         {route === "thumbnails" && <ThumbnailsPage focus={focus} />}
         {route === "ideas" && <IdeasPage focus={focus} onNavigate={navigate} />}
-        {route === "settings" && <SettingsPage onRunSetup={() => setOnboarding(true)} />}
+        {route === "settings" && <SettingsPage onRunSetup={() => setOnboarding(true)} onTour={startTour} />}
       </main>
 
       {palette && <CommandPalette onClose={() => setPalette(false)} onNavigate={navigate} />}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
       {onboarding && (
         <Onboarding
-          onDone={() => {
+          onDone={async () => {
             setOnboarding(false);
             navigate("home");
+            // First time through setup, continue straight into the tour.
+            if (!(await api.getSetting(SETTINGS.tourDone).catch(() => "1"))) startTour();
           }}
         />
       )}
+      {tour && <Tour onNavigate={navigate} onClose={endTour} />}
     </div>
   );
 }

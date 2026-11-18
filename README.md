@@ -32,6 +32,19 @@ npm run tauri dev      # desktop app, works on real folders
 npm run dev            # browser-only UI preview against in-memory demo data
 ```
 
+### Mac app
+
+A Mac app has to be built on a Mac. Without one, GitHub builds it: the **macOS build** workflow
+(`.github/workflows/macos.yml`) runs on pull requests, on `v*` tags, or by hand from the
+Actions tab. It runs the tests on Apple Silicon, then builds a `.dmg` for Apple Silicon and one
+for Intel; download them from the run's **Artifacts** (they arrive zipped).
+
+The app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"`), not notarized, so macOS asks
+once: open it, then approve it under **System Settings → Privacy & Security → Open Anyway**.
+Removing that prompt needs a paid Apple Developer account for signing and notarization.
+On a Mac you can also build locally with `npm run tauri build`. Install ffmpeg with
+`brew install ffmpeg` for video metadata and clip sections.
+
 ## Test
 
 ```bash
@@ -174,6 +187,9 @@ To regenerate the test screenshot, run `node scripts/make-idea-fixtures.mjs`.
   categories, brief footer), your media folder (optionally creating the pack's starter folders;
   only missing ones are made), a Projects folder, the default thumbnail platform and, optionally,
   an API key. Every step can be skipped; run it again from Settings.
+- **Tour:** right after first-run setup, an 8-step walkthrough switches to each page and
+  highlights where things are (including what each module doesn't do, e.g. the library guesses
+  a clip's type from its shape, not its content). Replay it from the sidebar or Settings.
 - **Settings** holds everything in one place: media folder, default naming preset and your own
   presets (validated: `{version}` is required so clashes bump instead of overwriting; no path
   characters), default platform and scoring weights, Projects folder and categories, the API key.
